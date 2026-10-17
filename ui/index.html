@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+  <title>App De Estudos</title>
+  <link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+  <aside class="lateral">
+    <div class="marca">📚 <span>Estudos</span></div>
+    <select id="plano" class="plano" aria-label="Plano"></select>
+    <nav>
+      <button data-tela="inicio" class="ativo">🏠 Início</button>
+      <button data-tela="ciclo">🔁 Ciclo</button>
+      <button data-tela="questoes">✍️ Questões</button>
+      <button data-tela="analise">📊 Análise</button>
+      <button data-tela="edital">📋 Edital</button>
+      <button data-tela="historico">🕘 Histórico</button>
+    </nav>
+    <button id="importar" class="secundario">+ Importar edital</button>
+  </aside>
+
+  <main>
+    <header class="topo">
+      <div>
+        <h1 id="saudacao">Olá</h1>
+        <p id="data" class="sutil"></p>
+      </div>
+      <button id="adicionar" class="primario">+ Adicionar estudo</button>
+    </header>
+
+    <div id="vazio" class="cartao vazio" hidden>
+      <h2>Nenhum plano ainda</h2>
+      <p>Importe o edital em markdown: cada título vira matéria e cada item de lista vira assunto.</p>
+      <button class="primario" data-acao="importar">Importar edital</button>
+    </div>
+
+    <section id="tela-inicio" class="tela">
+      <div class="grade-3">
+        <div class="cartao numero">
+          <span class="rotulo">Tempo de estudo hoje</span>
+          <strong id="n-hoje">0min</strong>
+          <span class="sutil" id="n-semana"></span>
+          <div class="barra"><div id="b-semana"></div></div>
+        </div>
+        <div class="cartao numero">
+          <span class="rotulo">Desempenho em questões</span>
+          <strong id="n-desempenho">sem questões</strong>
+          <span class="sutil" id="n-questoes"></span>
+        </div>
+        <div class="cartao numero">
+          <span class="rotulo">Progresso no edital</span>
+          <strong id="n-edital">0%</strong>
+          <span class="sutil" id="n-edital-det"></span>
+          <div class="barra"><div id="b-edital"></div></div>
+        </div>
+      </div>
+
+      <div class="grade-2">
+        <div class="cartao" id="cartao-proximo">
+          <div class="cabeca"><h2>Próximo estudo</h2><span class="sutil" id="p-progresso"></span></div>
+          <div id="proximo"></div>
+          <div id="cronometro" hidden>
+            <div class="relogio" id="relogio">00:00:00</div>
+            <div class="botoes">
+              <button id="pausar" class="secundario">Pausar</button>
+              <button id="finalizar" class="primario">Finalizar e registrar</button>
+              <button id="descartar" class="texto">Descartar</button>
+            </div>
+          </div>
+        </div>
+        <div class="cartao">
+          <div class="cabeca"><h2>Revisões de hoje</h2></div>
+          <ul id="revisoes" class="lista"></ul>
+        </div>
+      </div>
+
+      <div class="grade-2">
+        <div class="cartao">
+          <div class="cabeca"><h2>Estudo da semana</h2><span class="sutil" id="s-total"></span></div>
+          <div id="semana" class="colunas"></div>
+        </div>
+        <div class="cartao">
+          <div class="cabeca"><h2>Constância</h2><span class="sutil" id="c-seguidos"></span></div>
+          <div id="constancia" class="quadrados"></div>
+          <p class="sutil" id="c-legenda"></p>
+        </div>
+      </div>
+    </section>
+
+    <section id="tela-ciclo" class="tela" hidden>
+      <div class="cartao">
+        <div class="cabeca"><h2>Ciclo de estudos</h2><span class="sutil" id="ciclo-info"></span></div>
+        <p class="sutil">Matéria grande entra em toda volta; matéria pequena, em volta sim, volta não. O peso vem do número de questões e do quanto você já conhece a matéria (ajuste na aba Edital).</p>
+        <div id="ciclo"></div>
+      </div>
+    </section>
+
+    <section id="tela-questoes" class="tela" hidden>
+      <div id="q-escolha">
+        <div class="cartao">
+          <div class="cabeca"><h2>Resolver questões</h2><button id="q-importar" class="secundario">Importar quizzes do cofre</button></div>
+          <div class="filtros">
+            <label>Matéria <select id="q-materia"></select></label>
+            <label>Origem <select id="q-origem"></select></label>
+            <label>Situação
+              <select id="q-situacao">
+                <option value="nao_respondidas">Nunca respondidas</option>
+                <option value="erradas">Errei da última vez</option>
+                <option value="todas">Todas</option>
+              </select>
+            </label>
+            <label>Quantas <select id="q-quantas"><option>10</option><option selected>20</option><option>40</option></select></label>
+            <label class="check"><input type="checkbox" id="q-embaralhar" checked> Embaralhar</label>
+          </div>
+          <div class="cabeca rodape"><span class="sutil" id="q-disponiveis"></span><button id="q-comecar" class="primario">Começar</button></div>
+        </div>
+        <div class="cartao">
+          <div class="cabeca"><h2>Seu banco de questões</h2></div>
+          <table class="tabela">
+            <thead><tr><th>Matéria</th><th>Questões</th><th>Respondidas</th><th>Acerto</th></tr></thead>
+            <tbody id="q-resumo"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="q-resolver" class="cartao" hidden>
+        <div class="cabeca">
+          <span class="sutil" id="q-posicao"></span>
+          <span class="sutil" id="q-placar"></span>
+        </div>
+        <div class="q-meta" id="q-meta"></div>
+        <div class="q-enunciado" id="q-enunciado"></div>
+        <div class="q-alternativas" id="q-alternativas"></div>
+        <div class="q-comentario" id="q-comentario" hidden></div>
+        <div class="botoes">
+          <button id="q-encerrar" class="texto">Encerrar</button>
+          <button id="q-acao" class="primario">Responder</button>
+        </div>
+      </div>
+
+      <div id="q-fim" class="cartao" hidden></div>
+    </section>
+
+    <section id="tela-analise" class="tela" hidden>
+      <div class="grade-4">
+        <div class="cartao numero"><span class="rotulo">Acerto geral</span><strong id="a-acerto">sem dados</strong><span class="sutil" id="a-respostas"></span></div>
+        <div class="cartao numero"><span class="rotulo">Tempo médio por questão</span><strong id="a-tempo">sem dados</strong><span class="sutil">da questão aberta até responder</span></div>
+        <div class="cartao numero"><span class="rotulo">Banco já respondido</span><strong id="a-cobertura">0%</strong><span class="sutil" id="a-cobertura-det"></span></div>
+        <div class="cartao numero"><span class="rotulo">Para refazer</span><strong id="a-refazer">0</strong><span class="sutil">errou da última vez</span></div>
+      </div>
+      <div class="grade-2">
+        <div class="cartao">
+          <div class="cabeca"><h2>Evolução do acerto</h2><span class="sutil">por semana</span></div>
+          <div id="a-semanas" class="colunas"></div>
+        </div>
+        <div class="cartao">
+          <div class="cabeca"><h2>Por que você erra</h2><span class="sutil" id="a-causas-det"></span></div>
+          <div id="a-causas" class="barras"></div>
+        </div>
+      </div>
+      <div class="grade-2">
+        <div class="cartao">
+          <div class="cabeca"><h2>Por matéria</h2></div>
+          <div id="a-materias" class="barras"></div>
+        </div>
+        <div class="cartao">
+          <div class="cabeca"><h2>Por banca</h2></div>
+          <div id="a-bancas" class="barras"></div>
+        </div>
+      </div>
+      <div class="grade-2">
+        <div class="cartao">
+          <div class="cabeca"><h2>Temas mais fracos</h2><span class="sutil">com erro e 2 ou mais respostas</span></div>
+          <div id="a-temas" class="barras"></div>
+        </div>
+        <div class="cartao">
+          <div class="cabeca"><h2>Questões para refazer</h2><button id="a-refazer-btn" class="secundario">Refazer estas</button></div>
+          <ul id="a-lista" class="lista"></ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="tela-edital" class="tela" hidden>
+      <div id="edital"></div>
+    </section>
+
+    <section id="tela-historico" class="tela" hidden>
+      <div class="cartao">
+        <div class="cabeca"><h2>Histórico</h2></div>
+        <table class="tabela">
+          <thead><tr><th>Quando</th><th>Matéria</th><th>Tipo</th><th>Tempo</th><th>Questões</th><th>Anotação</th><th></th></tr></thead>
+          <tbody id="historico"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="dialogo">
+    <form id="form" method="dialog">
+      <h2 id="f-titulo">Registrar estudo</h2>
+      <label>Matéria <select name="materia_id" id="f-materia" required></select></label>
+      <label>Assunto <select name="topico_id" id="f-topico"></select></label>
+      <div class="linha">
+        <label>Tipo
+          <select name="tipo">
+            <option value="teoria">Teoria</option>
+            <option value="questoes">Questões</option>
+            <option value="revisao">Revisão</option>
+          </select>
+        </label>
+        <label>Minutos <input name="duracao_min" type="number" min="0" step="1" required></label>
+      </div>
+      <label>Quando <input name="inicio" type="datetime-local" required></label>
+      <div class="linha">
+        <label>Acertos <input name="acertos" type="number" min="0" value="0"></label>
+        <label>Erros <input name="erros" type="number" min="0" value="0"></label>
+      </div>
+      <label>Anotação <textarea name="anotacao" rows="3"></textarea></label>
+      <label class="check"><input type="checkbox" name="topico_concluido"> Terminei este assunto</label>
+      <input type="hidden" name="bloco_id">
+      <input type="hidden" name="sessao_id">
+      <div class="botoes">
+        <button value="cancelar" class="texto" formnovalidate>Cancelar</button>
+        <button value="salvar" class="primario">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>

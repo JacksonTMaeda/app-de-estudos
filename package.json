@@ -1,0 +1,59 @@
+{
+  "name": "app-de-estudos",
+  "productName": "App De Estudos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Planejamento e registro de estudo para concursos e provas, com ponte MCP para o Claude",
+  "type": "module",
+  "main": "src/main.js",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "bin": {
+    "estudos": "src/cli.js"
+  },
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test --test-timeout=20000 --disable-warning=ExperimentalWarning",
+    "mcp": "node --disable-warning=ExperimentalWarning src/mcp.js",
+    "cli": "node --disable-warning=ExperimentalWarning src/cli.js",
+    "instalador": "electron-builder --win --publish never"
+  },
+  "build": {
+    "appId": "io.github.jacksontmaeda.app-de-estudos",
+    "productName": "App De Estudos",
+    "asar": false,
+    "files": [
+      "src/**",
+      "ui/**",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "App De Estudos",
+      "artifactName": "App-De-Estudos-Setup-${version}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "JacksonTMaeda",
+      "repo": "app-de-estudos"
+    }
+  },
+  "devDependencies": {
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  }
+}
