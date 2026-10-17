@@ -42,6 +42,7 @@ async function iniciar() {
   const h = agora.getHours();
   $('#saudacao').textContent = h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
   $('#data').textContent = agora.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
+  $('#versao').textContent = `versão ${await chamar('versao')}`;
   await carregarPlanos();
 }
 

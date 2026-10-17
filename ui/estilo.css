@@ -217,3 +217,5 @@ dialog input:not([type=checkbox]), dialog select, dialog textarea {
 .acoes-linha button { border: 0; background: none; cursor: pointer; padding: 4px 6px; border-radius: 6px; color: var(--sutil); font-size: 13px; }
 .acoes-linha button:hover { background: var(--fundo); color: var(--texto); }
 .acoes-linha button.apagar:hover { color: var(--ruim); }
+
+.versao { text-align: center; font-size: 11px; }

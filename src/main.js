@@ -21,6 +21,7 @@ if (process.env.ESTUDOS_CAPTURA) app.disableHardwareAcceleration();
 
 // Tudo que a janela pode pedir. Pela tela só se apaga estudo (Histórico); o Claude apaga mais pelo MCP.
 const api = {
+  versao: () => app.getVersion(),
   planos: () => servico.listarPlanos(db),
   resumo: (planoId) => servico.resumo(db, planoId),
   proximoBloco: (planoId) => servico.proximoBloco(db, planoId),
