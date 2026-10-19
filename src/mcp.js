@@ -12,6 +12,7 @@ import { importarEdital } from './edital.js';
 import * as servico from './servico.js';
 import * as questoes from './questoes.js';
 import { analisarQuestoes } from './analise.js';
+import * as materiais from './materiais.js';
 
 const VERSAO = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 const PROTOCOLOS = ['2025-06-18', '2025-03-26', '2024-11-05'];
@@ -25,6 +26,7 @@ function banco() {
   if (!existsSync(CAMINHO)) throw new Error(`Banco do app não encontrado em ${CAMINHO}. Abra o App De Estudos uma vez e importe o edital.`);
   db = abrirBanco(CAMINHO);
   questoes.prepararQuestoes(db);
+  materiais.prepararMateriais(db);
   return db;
 }
 
@@ -476,10 +478,102 @@ Object.assign(FERRAMENTAS, {
       return { apagado: plano.nome, copia_do_banco: copia };
     },
   },
+
+  materiais: {
+    description:
+      'PDFs de estudo da pasta escolhida no app, com a página onde a pessoa parou em cada um. Sem matéria: resumo por matéria e os 10 abertos por último. ' +
+      'Com matéria: a lista completa dela. Cada PDF traz o caminho no disco, para ler o trecho direto do arquivo; o app nunca altera o PDF.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...PLANO,
+        materia: { type: 'string', description: 'Nome ou parte do nome da matéria. Use "sem materia" para os PDFs não ligados a nenhuma.' },
+      },
+    },
+    rodar({ plano_id, materia }) {
+      const plano = escolherPlano(plano_id);
+      const pasta = materiais.pastaDoPlano(banco(), plano.id);
+      if (!pasta) return { plano: plano.nome, pasta: null, aviso: 'Nenhuma pasta de materiais escolhida. Escolha na tela Materiais do app ou com atualizar_materiais.' };
+      const caminhos = new Map(banco().prepare('SELECT id, caminho FROM material WHERE plano_id = ?').all(plano.id).map((m) => [m.id, m.caminho]));
+      const todos = materiais.listarMateriais(banco(), plano.id);
+      const item = (m) => ({
+        id: m.id,
+        nome: m.nome,
+        materia: m.materia ?? null,
+        subpasta: m.pasta,
+        caminho: caminhos.get(m.id),
+        paginas: m.paginas,
+        ultima_pagina: m.paginas || m.aberto_em ? m.ultima_pagina : null,
+        lido_pct: m.paginas ? Math.round((m.ultima_pagina / m.paginas) * 100) : null,
+        aberto_em: m.aberto_em,
+      });
+      if (materia != null) {
+        const lista = normal(materia).startsWith('sem materia')
+          ? todos.filter((m) => !m.materia_id)
+          : todos.filter((m) => m.materia_id === materiaPorNome(plano.id, materia).id);
+        return { plano: plano.nome, pasta, materiais: lista.map(item) };
+      }
+      const resumo = new Map();
+      for (const m of todos) {
+        const chave = m.materia ?? `(sem matéria) ${m.pasta.split(' / ')[0] || 'pasta principal'}`;
+        const r = resumo.get(chave) ?? { materia: chave, pdfs: 0, abertos: 0 };
+        r.pdfs++;
+        if (m.aberto_em) r.abertos++;
+        resumo.set(chave, r);
+      }
+      const recentes = todos.filter((m) => m.aberto_em).sort((a, b) => b.aberto_em.localeCompare(a.aberto_em)).slice(0, 10);
+      return { plano: plano.nome, pasta, total: todos.length, por_materia: [...resumo.values()], abertos_por_ultimo: recentes.map(item) };
+    },
+  },
+
+  marcar_pagina_material: {
+    description: 'Grava a página onde a pessoa parou num PDF (por exemplo, quando ela conta que leu até tal página fora do app). O leitor do app abre nessa página.',
+    inputSchema: {
+      type: 'object',
+      properties: { material_id: { type: 'integer' }, pagina: { type: 'integer', minimum: 1 } },
+      required: ['material_id', 'pagina'],
+    },
+    escreve: true,
+    rodar({ material_id, pagina }) {
+      materiais.guardarPagina(banco(), material_id, pagina);
+      const m = materiais.obterMaterial(banco(), material_id);
+      return { material: m.nome, ultima_pagina: m.ultima_pagina, paginas: m.paginas };
+    },
+  },
+
+  ligar_material: {
+    description: 'Liga um PDF a uma matéria do plano (ou desliga, com materia vazia). Serve para os PDFs cuja subpasta não tem o nome de nenhuma matéria.',
+    inputSchema: {
+      type: 'object',
+      properties: { material_id: { type: 'integer' }, materia: { type: 'string', description: 'Nome ou parte do nome; vazio para tirar a matéria.' } },
+      required: ['material_id'],
+    },
+    escreve: true,
+    rodar({ material_id, materia }) {
+      const m = materiais.obterMaterial(banco(), material_id);
+      const alvo = materia ? materiaPorNome(m.plano_id, materia) : null;
+      materiais.associarMateria(banco(), material_id, alvo?.id ?? null);
+      return { material: m.nome, materia: alvo?.nome ?? null };
+    },
+  },
+
+  atualizar_materiais: {
+    description:
+      'Lê de novo a pasta de materiais do plano: PDFs novos entram (ligados à matéria pelo nome da subpasta), os que saíram da pasta saem da lista. ' +
+      'Com pasta, troca a pasta do plano. Os PDFs nunca são tocados; só a lista do app muda.',
+    inputSchema: { type: 'object', properties: { ...PLANO, pasta: { type: 'string', description: 'Caminho completo da pasta (opcional)' } } },
+    escreve: true,
+    rodar({ plano_id, pasta }) {
+      const plano = escolherPlano(plano_id);
+      const alvo = pasta ?? materiais.pastaDoPlano(banco(), plano.id);
+      if (!alvo) throw new Error('Este plano ainda não tem pasta de materiais: informe a pasta.');
+      return { plano: plano.nome, ...materiais.escanearPasta(banco(), plano.id, alvo) };
+    },
+  },
 });
 
 const INSTRUCOES =
-  'Dados do App De Estudos, o programa de estudo que roda neste PC (ciclo, registro de estudo, revisões e banco de questões). ' +
+  'Dados do App De Estudos, o programa de estudo que roda neste PC (ciclo, registro de estudo, revisões, banco de questões e materiais em PDF). ' +
   'Use para responder sobre o progresso real, orientar o que estudar e lançar ou corrigir o que a pessoa contar na conversa. ' +
   'As ferramentas gravam e apagam de verdade no app; as que apagam ou refazem guardam uma cópia do banco antes. ' +
   'Datas em YYYY-MM-DD e horários em hora local.';

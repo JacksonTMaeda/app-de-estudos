@@ -30,8 +30,8 @@ O programa se atualiza sozinho: ao abrir (e a cada 6 horas) ele confere as relea
 
 `src/mcp.js` deixa o Claude consultar e mexer no app ao vivo:
 
-- **Ler:** `ver_plano`, `proximo_estudo`, `resumo_periodo`, `revisoes_pendentes`, `historico_sessoes`, `analise_questoes`, `assuntos_da_materia`.
-- **Gravar:** `registrar_estudo`, `corrigir_estudo`, `marcar_assunto`, `concluir_revisao`, `ajustar_conhecimento`, `refazer_ciclo`, `definir_data_prova`, `adicionar_questoes`, `criar_plano`.
+- **Ler:** `ver_plano`, `proximo_estudo`, `resumo_periodo`, `revisoes_pendentes`, `historico_sessoes`, `analise_questoes`, `assuntos_da_materia`, `materiais` (PDFs com a página onde parou e o caminho do arquivo).
+- **Gravar:** `registrar_estudo`, `corrigir_estudo`, `marcar_assunto`, `concluir_revisao`, `ajustar_conhecimento`, `refazer_ciclo`, `definir_data_prova`, `adicionar_questoes`, `criar_plano`, `marcar_pagina_material`, `ligar_material`, `atualizar_materiais`.
 - **Apagar:** `apagar_estudo`, `apagar_questao`, `apagar_plano` (este exige o nome exato do plano). Antes de apagar, o servidor guarda uma cópia do banco.
 
 Roda com o Node que vem dentro do programa. Registro no Claude Code, com o programa instalado (troque `<você>` pelo seu usuário do Windows):

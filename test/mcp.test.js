@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, existsSync } from 'node:fs';
+import { mkdtempSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -175,4 +175,33 @@ test('Claude acrescenta e apaga questões, refaz o ciclo e mexe em plano', async
   const certo = await chamarFerramenta(c, 'apagar_plano', { plano_id: novo.dados.plano_id, confirmar_nome: 'Residência' });
   assert.equal(certo.dados.apagado, 'Residência');
   assert.equal((await chamarFerramenta(c, 'ver_plano')).dados.planos.length, 1);
+});
+
+test('Claude vê os materiais, marca a página, liga à matéria e relê a pasta', async (t) => {
+  const caminho = bancoDeTeste();
+  const raiz = mkdtempSync(join(tmpdir(), 'pdfs-'));
+  mkdirSync(join(raiz, 'Portugues'));
+  mkdirSync(join(raiz, 'Extras'));
+  writeFileSync(join(raiz, 'Portugues', 'Aula 01.pdf'), '%PDF');
+  writeFileSync(join(raiz, 'Extras', 'Bizu.pdf'), '%PDF');
+  const c = conversar(caminho);
+  t.after(() => c.fechar());
+
+  assert.match((await chamarFerramenta(c, 'materiais')).dados.aviso, /Nenhuma pasta/);
+  const lido = await chamarFerramenta(c, 'atualizar_materiais', { pasta: raiz });
+  assert.deepEqual([lido.dados.total, lido.dados.novos], [2, 2]);
+
+  const porMateria = await chamarFerramenta(c, 'materiais', { materia: 'Português' });
+  const [aula] = porMateria.dados.materiais;
+  assert.equal(aula.nome, 'Aula 01');
+  assert.equal(aula.caminho, join(raiz, 'Portugues', 'Aula 01.pdf'));
+
+  await chamarFerramenta(c, 'marcar_pagina_material', { material_id: aula.id, pagina: 12 });
+  const resumo = await chamarFerramenta(c, 'materiais');
+  assert.equal(resumo.dados.abertos_por_ultimo[0].ultima_pagina, 12);
+  assert.deepEqual(resumo.dados.por_materia.map((r) => r.materia), ['Português', '(sem matéria) Extras']);
+
+  const [bizu] = (await chamarFerramenta(c, 'materiais', { materia: 'sem materia' })).dados.materiais;
+  assert.equal((await chamarFerramenta(c, 'ligar_material', { material_id: bizu.id, materia: 'Lógica' })).dados.materia, 'Lógica');
+  assert.equal((await chamarFerramenta(c, 'materiais', { materia: 'Lógica' })).dados.materiais.length, 1);
 });
