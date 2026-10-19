@@ -25,7 +25,6 @@ export async function abrirLeitor(material, guardar) {
     standardFontDataUrl: `${BASE}standard_fonts/`,
     wasmUrl: `${BASE}wasm/`,
     iccUrl: `${BASE}iccs/`,
-    isEvalSupported: false,
   }).promise;
   const primeira = await leitor.doc.getPage(1);
   const v = primeira.getViewport({ scale: 1 });

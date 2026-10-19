@@ -95,3 +95,30 @@ test('só lê PDF de dentro da pasta do plano', () => {
   assert.throws(() => mt.lerPdf(db, m.id), /fora da pasta/);
   limpar();
 });
+
+test('subpasta que não deu para ler não tira os PDFs dela da lista', () => {
+  const { db, planoId, raiz, pdf, limpar } = preparar();
+  pdf('Portugues', 'Aula.pdf');
+  pdf('Logica', 'Aula.pdf');
+  mt.escanearPasta(db, planoId, raiz);
+  mt.guardarPagina(db, mt.listarMateriais(db, planoId).find((m) => m.pasta === 'Logica').id, 7, 20);
+  // Simula a pasta Logica sem permissão de leitura.
+  const semLogica = (r) => {
+    const achado = mt.acharPdfs(r);
+    return { pdfs: achado.pdfs.filter((c) => !c.includes(`${join(r, 'Logica')}`)), ilegiveis: [join(r, 'Logica')] };
+  };
+  const r = mt.escanearPasta(db, planoId, raiz, semLogica);
+  assert.equal(r.sumiram, 0);
+  assert.equal(r.pastas_ilegiveis.length, 1);
+  assert.equal(mt.listarMateriais(db, planoId).find((m) => m.pasta === 'Logica').ultima_pagina, 7);
+  limpar();
+});
+
+test('PDF com nome começando por dois pontos abre normalmente', () => {
+  const { db, planoId, raiz, pdf, limpar } = preparar();
+  pdf('..resumo.pdf');
+  mt.escanearPasta(db, planoId, raiz);
+  const [m] = mt.listarMateriais(db, planoId);
+  assert.equal(mt.lerPdf(db, m.id).toString(), '%PDF-1.4 teste');
+  limpar();
+});

@@ -69,15 +69,18 @@ export function materiaDaPasta(nomePasta, materias) {
   return melhor?.id ?? null;
 }
 
-function acharPdfs(raiz) {
+// Devolve os PDFs achados e as pastas que não deu para ler (sem permissão, em uso...).
+export function acharPdfs(raiz) {
   const achados = [];
+  const ilegiveis = [];
   const andar = (pasta, nivel) => {
     if (nivel > PROFUNDIDADE || achados.length >= LIMITE) return;
     let itens;
     try {
       itens = readdirSync(pasta, { withFileTypes: true });
     } catch {
-      return; // pasta sem permissão: segue com as outras
+      ilegiveis.push(pasta); // segue com as outras; o que estava listado dela fica na lista
+      return;
     }
     for (const item of itens) {
       const caminho = join(pasta, item.name);
@@ -86,16 +89,22 @@ function acharPdfs(raiz) {
     }
   };
   andar(raiz, 0);
-  return achados;
+  return { pdfs: achados, ilegiveis };
 }
+
+const dentroDe = (raiz, caminho) => {
+  const rel = relative(raiz, caminho);
+  return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+};
 
 // Lê a pasta e atualiza a lista: PDF novo entra (com a matéria pelo nome da primeira subpasta),
 // o que já estava fica como está (página e matéria escolhida à mão), o que sumiu da pasta sai da lista.
-export function escanearPasta(db, planoId, raiz) {
+// PDF de subpasta que não deu para ler fica na lista: não sumiu, só não foi possível conferir.
+export function escanearPasta(db, planoId, raiz, achar = acharPdfs) {
   raiz = resolve(raiz);
   if (!existsSync(raiz) || !statSync(raiz).isDirectory()) throw new Error(`Pasta não encontrada: ${raiz}`);
   const materias = db.prepare('SELECT id, nome FROM materia WHERE plano_id = ?').all(planoId);
-  const pdfs = acharPdfs(raiz);
+  const { pdfs, ilegiveis } = achar(raiz);
   return transacao(db, () => {
     db.prepare(`INSERT INTO preferencia (chave, valor) VALUES (?, ?)
       ON CONFLICT (chave) DO UPDATE SET valor = excluded.valor`).run(chave(planoId), JSON.stringify(raiz));
@@ -113,8 +122,13 @@ export function escanearPasta(db, planoId, raiz) {
       novos++;
     }
     const apagar = db.prepare('DELETE FROM material WHERE plano_id = ? AND caminho = ?');
-    for (const sumiu of existentes) apagar.run(planoId, sumiu);
-    return { pasta: raiz, total: pdfs.length, novos, sumiram: existentes.size };
+    let sumiram = 0;
+    for (const caminho of existentes) {
+      if (ilegiveis.some((pasta) => dentroDe(pasta, caminho))) continue;
+      apagar.run(planoId, caminho);
+      sumiram++;
+    }
+    return { pasta: raiz, total: pdfs.length, novos, sumiram, pastas_ilegiveis: ilegiveis };
   });
 }
 
@@ -154,8 +168,7 @@ export function guardarPagina(db, materialId, pagina, paginas) {
 export function lerPdf(db, materialId) {
   const mt = obterMaterial(db, materialId);
   const raiz = pastaDoPlano(db, mt.plano_id);
-  const rel = raiz ? relative(raiz, mt.caminho) : '';
-  if (!raiz || !rel || rel.startsWith('..') || isAbsolute(rel) || !/\.pdf$/i.test(mt.caminho)) {
+  if (!raiz || !dentroDe(raiz, mt.caminho) || !/\.pdf$/i.test(mt.caminho)) {
     throw new Error('Material fora da pasta de materiais do plano.');
   }
   if (!existsSync(mt.caminho)) throw new Error(`O arquivo não está mais na pasta: ${mt.nome}. Atualize a lista.`);

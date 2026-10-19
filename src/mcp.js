@@ -560,14 +560,14 @@ Object.assign(FERRAMENTAS, {
   atualizar_materiais: {
     description:
       'Lê de novo a pasta de materiais do plano: PDFs novos entram (ligados à matéria pelo nome da subpasta), os que saíram da pasta saem da lista. ' +
-      'Com pasta, troca a pasta do plano. Os PDFs nunca são tocados; só a lista do app muda.',
-    inputSchema: { type: 'object', properties: { ...PLANO, pasta: { type: 'string', description: 'Caminho completo da pasta (opcional)' } } },
+      'Os PDFs nunca são tocados; só a lista do app muda. A pasta em si só se escolhe ou troca pela tela Materiais do app.',
+    inputSchema: { type: 'object', properties: { ...PLANO } },
     escreve: true,
-    rodar({ plano_id, pasta }) {
+    rodar({ plano_id }) {
       const plano = escolherPlano(plano_id);
-      const alvo = pasta ?? materiais.pastaDoPlano(banco(), plano.id);
-      if (!alvo) throw new Error('Este plano ainda não tem pasta de materiais: informe a pasta.');
-      return { plano: plano.nome, ...materiais.escanearPasta(banco(), plano.id, alvo) };
+      const pasta = materiais.pastaDoPlano(banco(), plano.id);
+      if (!pasta) throw new Error('Este plano ainda não tem pasta de materiais. A pessoa escolhe a pasta na tela Materiais do app.');
+      return { plano: plano.nome, ...materiais.escanearPasta(banco(), plano.id, pasta) };
     },
   },
 });

@@ -758,7 +758,7 @@ async function escanear(nome) {
     const r = await chamar(nome, estado.planoId);
     if (r) {
       await telaMateriais();
-      $('#m-aviso').textContent = `${r.total} PDFs na pasta; ${r.novos} novos${r.sumiram ? `, ${r.sumiram} saíram da lista porque não estão mais lá` : ''}.`;
+      $('#m-aviso').textContent = `${r.total} PDFs na pasta; ${r.novos} novos${r.sumiram ? `, ${r.sumiram} saíram da lista porque não estão mais lá` : ''}.${r.pastas_ilegiveis?.length ? ` Não deu para ler ${r.pastas_ilegiveis.length} subpasta(s); o que estava nelas continua na lista.` : ''}`;
     } else await telaMateriais();
   } catch (erro) {
     $('#m-aviso').textContent = erro.message;

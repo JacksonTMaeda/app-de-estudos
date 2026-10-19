@@ -188,8 +188,15 @@ test('Claude vê os materiais, marca a página, liga à matéria e relê a pasta
   t.after(() => c.fechar());
 
   assert.match((await chamarFerramenta(c, 'materiais')).dados.aviso, /Nenhuma pasta/);
-  const lido = await chamarFerramenta(c, 'atualizar_materiais', { pasta: raiz });
-  assert.deepEqual([lido.dados.total, lido.dados.novos], [2, 2]);
+  // A pasta só se escolhe pela tela do app; o Claude não consegue apontar para outro lugar.
+  const recusado = await chamarFerramenta(c, 'atualizar_materiais', { pasta: raiz });
+  assert.ok(recusado.erro);
+  assert.match(recusado.dados, /tela Materiais/);
+  const db = abrirBanco(caminho);
+  db.prepare("INSERT INTO preferencia (chave, valor) VALUES ('pasta_materiais:1', ?)").run(JSON.stringify(raiz));
+  db.close();
+  const lido = await chamarFerramenta(c, 'atualizar_materiais', { pasta: tmpdir() });
+  assert.deepEqual([lido.dados.pasta, lido.dados.total, lido.dados.novos], [raiz, 2, 2]);
 
   const porMateria = await chamarFerramenta(c, 'materiais', { materia: 'Português' });
   const [aula] = porMateria.dados.materiais;
