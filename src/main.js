@@ -1,9 +1,9 @@
 // Processo principal do programa: abre a janela e atende os pedidos dela ao banco.
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import atualizador from 'electron-updater';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { abrirBanco, CAMINHO_PADRAO, copiaDeAbertura } from './db.js';
 import { importarEdital } from './edital.js';
 import { gerarCiclo } from './ciclo.js';
@@ -75,10 +75,32 @@ function opcoesDoCiclo(planoId) {
   return c ? { total: c.tempo_total_min, min: c.bloco_min, max: c.bloco_max, passo: c.passo_min } : {};
 }
 
-ipcMain.handle('api', async (_evento, nome, ...args) => {
+// Só as telas do próprio programa (ui/index.html) podem falar com o banco.
+const TELA = pathToFileURL(join(aqui, '..', 'ui', 'index.html')).href;
+const ehTelaDoPrograma = (url) => typeof url === 'string' && url.split('#')[0] === TELA;
+
+ipcMain.handle('api', async (evento, nome, ...args) => {
+  if (!ehTelaDoPrograma(evento.senderFrame?.url)) throw new Error('Pedido recusado: não veio da tela do programa.');
   if (!Object.hasOwn(api, nome)) throw new Error(`Pedido desconhecido: ${nome}`);
   return api[nome](...args);
 });
+
+// Link em questão ou comentário abre no navegador do sistema, nunca dentro do programa.
+function travarNavegacao(janela) {
+  const abrirFora = (url) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+  };
+  janela.webContents.setWindowOpenHandler(({ url }) => {
+    abrirFora(url);
+    return { action: 'deny' };
+  });
+  janela.webContents.on('will-navigate', (evento, url) => {
+    if (ehTelaDoPrograma(url)) return;
+    evento.preventDefault();
+    abrirFora(url);
+  });
+  janela.webContents.on('will-attach-webview', (evento) => evento.preventDefault());
+}
 
 // Mostra e traz para a frente. Chamado duas vezes de propósito: no Windows, a primeira exibição
 // de um programa aberto a partir de um terminal oculto herda o "fique escondido" de quem o abriu.
@@ -106,6 +128,7 @@ function criarJanela() {
       nodeIntegration: false,
     },
   });
+  travarNavegacao(janela);
   janela.once('ready-to-show', () => mostrarJanela(janela));
   janela.webContents.once('did-finish-load', () => janela.setTitle(`App De Estudos ${app.getVersion()}`));
   janela.loadFile(join(aqui, '..', 'ui', 'index.html'));
