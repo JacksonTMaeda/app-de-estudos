@@ -1,7 +1,7 @@
 {
   "name": "app-de-estudos",
   "productName": "App De Estudos",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "Planejamento e registro de estudo para concursos e provas, com ponte MCP para o Claude",
   "type": "module",
@@ -26,7 +26,10 @@
     "files": [
       "src/**",
       "ui/**",
-      "package.json"
+      "package.json",
+      "!node_modules/pdfjs-dist/{legacy,types,web,image_decoders}/**",
+      "!node_modules/pdfjs-dist/**/*.map",
+      "!node_modules/@napi-rs/**"
     ],
     "directories": {
       "output": "dist"
@@ -54,6 +57,7 @@
     "electron-builder": "^26.15.3"
   },
   "dependencies": {
-    "electron-updater": "^6.8.9"
+    "electron-updater": "^6.8.9",
+    "pdfjs-dist": "6.4.299"
   }
 }

@@ -219,3 +219,43 @@ dialog input:not([type=checkbox]), dialog select, dialog textarea {
 .acoes-linha button.apagar:hover { color: var(--ruim); }
 
 .versao { text-align: center; font-size: 11px; }
+
+/* ---------- materiais e leitor ---------- */
+.grupo-material { margin-top: 16px; }
+.grupo-material h3 { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 0 0 8px; }
+.grupo-material h3 .ponto { width: 10px; height: 10px; border-radius: 50%; }
+.materiais { list-style: none; margin: 0; padding: 0; }
+.materiais li { display: flex; align-items: center; gap: 12px; padding: 8px 4px; border-top: 1px solid var(--borda); }
+.materiais li:first-child { border-top: 0; }
+.materiais .m-nome { flex: 1; min-width: 0; }
+.materiais .m-nome button { all: unset; cursor: pointer; font-weight: 600; }
+.materiais .m-nome button:hover { color: var(--primaria); }
+.materiais .m-nome .sutil { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.materiais .m-progresso { width: 140px; text-align: right; }
+.materiais .m-barra { height: 4px; background: var(--vazio); border-radius: 2px; margin-top: 4px; overflow: hidden; }
+.materiais .m-barra div { height: 100%; background: var(--primaria); }
+.materiais select { max-width: 200px; padding: 4px; border-radius: 6px; border: 1px solid var(--borda); background: var(--fundo); }
+
+.tela.leitor:not([hidden]) { display: flex; flex-direction: column; height: calc(100vh - 140px); }
+.barra-leitor { display: flex; align-items: center; gap: 12px; padding: 8px 4px; border-bottom: 1px solid var(--borda); }
+.l-titulo { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.l-titulo strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.l-controles { display: flex; align-items: center; gap: 4px; }
+.l-controles input { width: 60px; padding: 4px; text-align: right; border-radius: 6px; border: 1px solid var(--borda); background: var(--fundo); }
+.l-paginas { position: relative; overflow-anchor: none; flex: 1; overflow: auto; padding: 16px; background: var(--vazio); outline: none; }
+.l-pagina { position: relative; margin: 0 auto 16px; background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15); }
+.l-pagina canvas { display: block; width: 100%; height: 100%; }
+.l-pagina .num { position: absolute; top: 50%; left: 0; right: 0; text-align: center; color: #999; }
+
+/* Camada de texto do PDF.js (texto transparente por cima da imagem, para selecionar e copiar). */
+.textLayer { position: absolute; inset: 0; overflow: clip; line-height: 1; transform-origin: 0 0; z-index: 0;
+  --min-font-size: 1; --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv: calc(1 / var(--min-font-size)); }
+.textLayer :is(span, br) { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0% 0%; }
+.textLayer > :not(.markedContent), .textLayer .markedContent span:not(.markedContent) {
+  z-index: 1; --font-height: 0; font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1; --rotate: 0deg; transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }
+.textLayer .markedContent { display: contents; }
+.textLayer ::selection { background: rgba(0, 0, 255, 0.25); color: transparent; }
+.textLayer br::selection { background: transparent; }
+.textLayer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: 0; cursor: default; user-select: none; }
+.materiais li > button:last-child { min-width: 96px; }

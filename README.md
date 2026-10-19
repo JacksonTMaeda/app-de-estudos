@@ -23,6 +23,7 @@ O programa se atualiza sozinho: ao abrir (e a cada 6 horas) ele confere as relea
 - **Ciclo:** peso da matéria = `2 ^ (-conhecimento) × importância`, em blocos de 45 a 90 min. Matéria cujo tempo não chega ao bloco mínimo entra em volta sim, volta não.
 - **Questões:** importa quizzes em HTML, filtra por matéria, banca e situação, corrige com comentário e pergunta a causa de cada erro.
 - **Análise:** acerto por semana, matéria, banca e tema, causas dos erros, questões para refazer.
+- **Materiais:** escolha a pasta dos PDFs; cada subpasta com o nome de uma matéria fica ligada a ela (dá para trocar à mão). O leitor abre na página onde você parou, com zoom e texto selecionável. O PDF fica onde está: o app guarda só o caminho e a página.
 - **Edital** e **Histórico** (corrigir e apagar estudo).
 
 ## Ponte com o Claude (servidor MCP)

@@ -10,6 +10,7 @@ import { gerarCiclo } from './ciclo.js';
 import * as servico from './servico.js';
 import * as questoes from './questoes.js';
 import { analisarQuestoes } from './analise.js';
+import * as materiais from './materiais.js';
 
 const aqui = dirname(fileURLToPath(import.meta.url));
 const CAMINHO = process.env.ESTUDOS_DB || CAMINHO_PADRAO;
@@ -17,6 +18,7 @@ const db = abrirBanco(CAMINHO);
 // Cópia antes de qualquer ajuste de banco que a versão nova traga (e uma por dia).
 copiaDeAbertura(db, CAMINHO, app.getVersion());
 questoes.prepararQuestoes(db);
+materiais.prepararMateriais(db);
 if (process.env.ESTUDOS_CAPTURA) app.disableHardwareAcceleration();
 
 // Tudo que a janela pode pedir. Pela tela só se apaga estudo (Histórico); o Claude apaga mais pelo MCP.
@@ -55,6 +57,25 @@ const api = {
     if (escolha.canceled || escolha.filePaths.length === 0) return null;
     return questoes.importarPasta(db, planoId, escolha.filePaths[0]);
   },
+  materiais: (planoId) => ({
+    pasta: materiais.pastaDoPlano(db, planoId),
+    lista: materiais.listarMateriais(db, planoId),
+  }),
+  escolherPastaMateriais: async (planoId) => {
+    const escolha = await dialog.showOpenDialog({
+      title: 'Escolha a pasta dos materiais em PDF (uma subpasta por matéria)',
+      properties: ['openDirectory'],
+    });
+    if (escolha.canceled || escolha.filePaths.length === 0) return null;
+    return materiais.escanearPasta(db, planoId, escolha.filePaths[0]);
+  },
+  atualizarMateriais: (planoId) => {
+    const pasta = materiais.pastaDoPlano(db, planoId);
+    return pasta ? materiais.escanearPasta(db, planoId, pasta) : null;
+  },
+  associarMaterial: (materialId, materiaId) => materiais.associarMateria(db, materialId, materiaId),
+  abrirMaterial: (materialId) => ({ ...materiais.obterMaterial(db, materialId), bytes: materiais.lerPdf(db, materialId) }),
+  guardarPagina: (materialId, pagina, paginas) => materiais.guardarPagina(db, materialId, pagina, paginas),
   importarEdital: async () => {
     const escolha = await dialog.showOpenDialog({
       title: 'Escolha o edital em markdown',

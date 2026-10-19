@@ -1,4 +1,6 @@
 // Telas do programa. Todo dado vem do processo principal por window.estudos.chamar.
+import { abrirLeitor, fecharLeitor } from './leitor.js';
+
 const chamar = (nome, ...args) => window.estudos.chamar(nome, ...args);
 const $ = (sel) => document.querySelector(sel);
 
@@ -30,6 +32,7 @@ document.querySelectorAll('nav button').forEach((b) =>
   b.addEventListener('click', () => mostrar(b.dataset.tela)),
 );
 function mostrar(tela) {
+  if (estado.tela === 'leitor' && tela !== 'leitor') fecharLeitor();
   estado.tela = tela;
   document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('ativo', b.dataset.tela === tela));
   document.querySelectorAll('.tela').forEach((s) => (s.hidden = s.id !== `tela-${tela}`));
@@ -85,6 +88,7 @@ async function atualizar() {
     await causas();
     await telaAnalise();
   }
+  if (estado.tela === 'materiais') await telaMateriais();
   if (estado.tela === 'edital') telaEdital();
   if (estado.tela === 'historico') await telaHistorico();
 }
@@ -690,6 +694,79 @@ async function telaHistorico() {
     }),
   );
 }
+
+// ---------- materiais ----------
+async function telaMateriais() {
+  const { pasta, lista } = await chamar('materiais', estado.planoId);
+  $('#m-pasta').textContent = pasta ? `Pasta: ${pasta}` : 'Nenhuma pasta escolhida para este plano.';
+  $('#m-atualizar').hidden = !pasta;
+  $('#m-escolher').textContent = pasta ? 'Trocar pasta' : 'Escolher pasta';
+  if (!pasta) {
+    $('#m-aviso').textContent = 'Escolha a pasta onde estão os PDFs. Cada subpasta com o nome de uma matéria fica ligada a ela; o PDF continua onde está, o app só guarda o caminho e a página onde você parou.';
+    $('#m-grupos').innerHTML = '';
+    return;
+  }
+  $('#m-aviso').textContent = lista.length ? '' : 'Nenhum PDF nesta pasta.';
+
+  // Um grupo por matéria, na ordem do edital; o que não casou com matéria fica agrupado pela pasta.
+  const grupos = new Map();
+  for (const m of lista) {
+    const chave = m.materia_id ? `m${m.materia_id}` : `p${m.pasta.split(' / ')[0] || '(pasta principal)'}`;
+    if (!grupos.has(chave)) grupos.set(chave, { titulo: m.materia ?? (m.pasta.split(' / ')[0] || 'Pasta principal'), materiaId: m.materia_id, cor: m.cor, itens: [] });
+    grupos.get(chave).itens.push(m);
+  }
+  const porNome = (a, b) => `${a.pasta}/${a.nome}`.localeCompare(`${b.pasta}/${b.nome}`, 'pt-BR', { numeric: true });
+  const opcoes = (atual) => `<option value="">Sem matéria</option>` + estado.materias
+    .map((m) => `<option value="${m.id}" ${m.id === atual ? 'selected' : ''}>${esc(m.nome)}</option>`).join('');
+
+  $('#m-grupos').innerHTML = [...grupos.values()].map((g) => `
+    <div class="cartao grupo-material">
+      <h3>${g.materiaId ? `<span class="ponto" style="background:${cor(g.materiaId, g.cor)}"></span>` : '📁'} ${esc(g.titulo)}
+        <span class="sutil">${g.itens.length} PDF${g.itens.length === 1 ? '' : 's'}</span></h3>
+      <ul class="materiais">${g.itens.sort(porNome).map((m) => {
+        const lido = m.paginas ? m.ultima_pagina / m.paginas : 0;
+        const sub = [m.pasta, m.aberto_em ? `aberto em ${dataBR(m.aberto_em)}` : 'nunca aberto'].filter(Boolean).join(' · ');
+        return `<li>
+          <div class="m-nome"><button data-abrir="${m.id}">${esc(m.nome)}</button><span class="sutil">${esc(sub)}</span></div>
+          <select data-materia="${m.id}" aria-label="Matéria">${opcoes(m.materia_id)}</select>
+          <div class="m-progresso"><span class="sutil">${m.paginas ? `pág. ${m.ultima_pagina} de ${m.paginas}` : ''}</span>
+            <div class="m-barra"><div style="width:${lido * 100}%"></div></div></div>
+          <button class="secundario" data-abrir="${m.id}">${m.aberto_em ? 'Continuar' : 'Abrir'}</button>
+        </li>`;
+      }).join('')}</ul>
+    </div>`).join('');
+
+  $('#m-grupos').querySelectorAll('[data-abrir]').forEach((b) => b.addEventListener('click', () => lerMaterial(Number(b.dataset.abrir))));
+  $('#m-grupos').querySelectorAll('[data-materia]').forEach((s) => s.addEventListener('change', async () => {
+    await chamar('associarMaterial', Number(s.dataset.materia), s.value ? Number(s.value) : null);
+    telaMateriais();
+  }));
+}
+
+async function lerMaterial(id) {
+  mostrar('leitor');
+  try {
+    await abrirLeitor(await chamar('abrirMaterial', id), (materialId, pagina, paginas) => chamar('guardarPagina', materialId, pagina, paginas));
+  } catch (erro) {
+    $('#l-paginas').innerHTML = `<p class="sutil">Não foi possível abrir: ${esc(erro.message)}</p>`;
+  }
+}
+
+async function escanear(nome) {
+  $('#m-aviso').textContent = 'Lendo a pasta…';
+  try {
+    const r = await chamar(nome, estado.planoId);
+    if (r) {
+      await telaMateriais();
+      $('#m-aviso').textContent = `${r.total} PDFs na pasta; ${r.novos} novos${r.sumiram ? `, ${r.sumiram} saíram da lista porque não estão mais lá` : ''}.`;
+    } else await telaMateriais();
+  } catch (erro) {
+    $('#m-aviso').textContent = erro.message;
+  }
+}
+$('#m-escolher').addEventListener('click', () => escanear('escolherPastaMateriais'));
+$('#m-atualizar').addEventListener('click', () => escanear('atualizarMateriais'));
+$('#l-voltar').addEventListener('click', () => mostrar('materiais'));
 
 // O Claude pode gravar no banco com o programa aberto: recarrega ao voltar para a janela e a cada 30 s,
 // menos no meio de uma rodada de questões ou com a janela de registro aberta.
