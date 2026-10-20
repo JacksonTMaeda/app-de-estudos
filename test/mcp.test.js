@@ -299,3 +299,18 @@ test('Claude cadastra fase, vê a virada, conta o bloco misturado e ajusta lotes
   const sims = await chamarFerramenta(c, 'resultado_simulados');
   assert.deepEqual(sims.dados.simulados, []);
 });
+
+test('o servidor confere os números que o Claude manda, mesmo fora do esquema', async (t) => {
+  const c = conversar(bancoDeTeste());
+  t.after(() => c.fechar());
+  await c.pedir('initialize', { protocolVersion: '2025-06-18' });
+  const meta = await chamarFerramenta(c, 'definir_meta_acerto', { materia: 'Português', meta_pct: '<img src=x onerror=alert(1)>' });
+  assert.ok(meta.erro && /percentual/.test(meta.dados));
+  for (const ruim of [{ intervalos_revisao: 'abc' }, { intervalos_revisao: [0] }, { minutos_constancia: 'x' }, { modo_semana: 'outro' }, { teto_semanal_min: -5 }]) {
+    const r = await chamarFerramenta(c, 'ajustar_preferencias', ruim);
+    assert.ok(r.erro, JSON.stringify(ruim));
+  }
+  const plano = await chamarFerramenta(c, 'ver_plano');
+  assert.equal(plano.dados.materias[0].meta_acerto_pct, null);
+  assert.equal(plano.dados.semana.modo, 'meta');
+});

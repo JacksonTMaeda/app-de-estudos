@@ -111,7 +111,8 @@ const DATA = (desc) => ({ type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', des
 const FERRAMENTAS = {
   ver_plano: {
     description:
-      'Visão geral do plano de estudo: prova, matérias com peso no ciclo (%), nível de conhecimento, importância (questões na prova), assuntos concluídos, tempo estudado e acerto em questões por matéria.',
+      'Visão geral do plano de estudo: prova, matérias com peso no ciclo (%), nível de conhecimento, importância (questões na prova), assuntos concluídos, tempo estudado e acerto em questões por matéria. ' +
+      'Se a fase do plano mudou desde o último ciclo, refaz o ciclo antes de responder (com cópia do banco) e avisa em virada_de_fase.',
     inputSchema: { type: 'object', properties: { ...PLANO } },
     rodar({ plano_id }) {
       const plano = escolherPlano(plano_id);
@@ -151,7 +152,9 @@ const FERRAMENTAS = {
   },
 
   proximo_estudo: {
-    description: 'O que estudar agora pelo ciclo: o próximo bloco (matéria, minutos, assunto sugerido, tipo do bloco e fase) e os 3 seguintes.',
+    description:
+      'O que estudar agora pelo ciclo: o próximo bloco (matéria, minutos, assunto sugerido, tipo do bloco e fase) e os 3 seguintes. ' +
+      'Se a fase do plano mudou desde o último ciclo, refaz o ciclo antes de responder (com cópia do banco) e avisa em virada_de_fase.',
     inputSchema: { type: 'object', properties: { ...PLANO } },
     rodar({ plano_id }) {
       const plano = escolherPlano(plano_id);
@@ -766,8 +769,10 @@ Object.assign(FERRAMENTAS, {
     rodar(args) {
       const plano = escolherPlano(args.plano_id);
       const m = materiaPorNome(plano.id, args.materia);
-      banco().prepare('UPDATE materia SET meta_acerto = ? WHERE id = ?').run(args.meta_pct ?? null, m.id);
-      return { materia: m.nome, meta_acerto_pct: args.meta_pct ?? null };
+      const meta = args.meta_pct === undefined || args.meta_pct === null ? null : Number(args.meta_pct);
+      if (meta !== null && !(meta >= 1 && meta <= 100)) throw new Error('meta_pct é um percentual de 1 a 100.');
+      banco().prepare('UPDATE materia SET meta_acerto = ? WHERE id = ?').run(meta, m.id);
+      return { materia: m.nome, meta_acerto_pct: meta };
     },
   },
 
@@ -789,11 +794,22 @@ Object.assign(FERRAMENTAS, {
     escreve: true,
     rodar(args) {
       const plano = escolherPlano(args.plano_id);
+      const inteiro = (v, minimo, nome) => {
+        const n = Number(v);
+        if (!Number.isInteger(n) || n < minimo) throw new Error(`${nome} precisa ser um número inteiro a partir de ${minimo}.`);
+        return n;
+      };
+      const intervalos = args.intervalos_revisao === undefined ? null : args.intervalos_revisao;
+      if (intervalos !== null && (!Array.isArray(intervalos) || intervalos.length === 0)) throw new Error('intervalos_revisao é uma lista de dias, como [1, 7, 30].');
+      const dias = intervalos && [...new Set(intervalos.map((d) => inteiro(d, 1, 'Cada intervalo')))].sort((a, b) => a - b);
+      const constancia = args.minutos_constancia === undefined ? null : inteiro(args.minutos_constancia, 1, 'minutos_constancia');
+      if (args.modo_semana !== undefined && !['meta', 'teto'].includes(args.modo_semana)) throw new Error('modo_semana é "meta" ou "teto".');
+      const teto = args.teto_semanal_min === undefined ? undefined : inteiro(args.teto_semanal_min, 0, 'teto_semanal_min');
       const gravar = banco().prepare('INSERT INTO preferencia (chave, valor) VALUES (?, ?) ON CONFLICT (chave) DO UPDATE SET valor = excluded.valor');
-      if (args.intervalos_revisao) gravar.run('intervalos_revisao', JSON.stringify([...new Set(args.intervalos_revisao.map(Math.round))].sort((a, b) => a - b)));
-      if (args.minutos_constancia) gravar.run('minutos_constancia', JSON.stringify(Math.round(args.minutos_constancia)));
+      if (dias) gravar.run('intervalos_revisao', JSON.stringify(dias));
+      if (constancia !== null) gravar.run('minutos_constancia', JSON.stringify(constancia));
       if (args.modo_semana) banco().prepare('UPDATE plano SET modo_semana = ? WHERE id = ?').run(args.modo_semana, plano.id);
-      if (args.teto_semanal_min !== undefined) banco().prepare('UPDATE plano SET teto_semanal_min = ? WHERE id = ?').run(args.teto_semanal_min || null, plano.id);
+      if (teto !== undefined) banco().prepare('UPDATE plano SET teto_semanal_min = ? WHERE id = ?').run(teto || null, plano.id);
       const pref = (chave) => JSON.parse(banco().prepare('SELECT valor FROM preferencia WHERE chave = ?').get(chave).valor);
       const p = banco().prepare('SELECT modo_semana, teto_semanal_min FROM plano WHERE id = ?').get(plano.id);
       return {

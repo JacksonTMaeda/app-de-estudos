@@ -182,9 +182,26 @@ const COLUNAS_NOVAS = {
 
 export const colunasDe = (db, tabela) => new Set(db.prepare(`PRAGMA table_info(${tabela})`).all().map((c) => c.name));
 
+const migrado = (db) =>
+  Object.entries(COLUNAS_NOVAS).every(([tabela, colunas]) => {
+    const existentes = colunasDe(db, tabela);
+    return Object.keys(colunas).every((c) => existentes.has(c));
+  }) &&
+  colunasDe(db, 'bloco').has('tipo') &&
+  !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'simulado'").get();
+
 // Só acrescenta: tabela nova, coluna nova, e a tabela bloco (derivada) com materia_id opcional.
+// O app e o servidor MCP podem abrir o banco ao mesmo tempo logo depois da atualização: a migração
+// pega a trava de escrita (BEGIN IMMEDIATE) antes de conferir o que falta, e só um dos dois migra.
 // Banco aberto só para leitura fica como está; o app atualiza na próxima vez que abrir.
 function migrar(db) {
+  if (migrado(db)) return;
+  try {
+    db.exec('BEGIN IMMEDIATE');
+  } catch (erro) {
+    if (/readonly/i.test(erro.message)) return;
+    throw erro;
+  }
   try {
     db.exec(ESQUEMA_1_1);
     for (const [tabela, colunas] of Object.entries(COLUNAS_NOVAS)) {
@@ -194,15 +211,15 @@ function migrar(db) {
       }
     }
     if (!colunasDe(db, 'bloco').has('tipo')) {
-      transacao(db, () => {
-        db.exec(`CREATE TABLE bloco_novo (${COLUNAS_BLOCO});
-          INSERT INTO bloco_novo (id, ciclo_id, materia_id, volta, posicao, duracao_min, feito)
-            SELECT id, ciclo_id, materia_id, volta, posicao, duracao_min, feito FROM bloco;
-          DROP TABLE bloco;
-          ALTER TABLE bloco_novo RENAME TO bloco;`);
-      });
+      db.exec(`CREATE TABLE bloco_novo (${COLUNAS_BLOCO});
+        INSERT INTO bloco_novo (id, ciclo_id, materia_id, volta, posicao, duracao_min, feito)
+          SELECT id, ciclo_id, materia_id, volta, posicao, duracao_min, feito FROM bloco;
+        DROP TABLE bloco;
+        ALTER TABLE bloco_novo RENAME TO bloco;`);
     }
+    db.exec('COMMIT');
   } catch (erro) {
+    db.exec('ROLLBACK');
     if (!/readonly/i.test(erro.message)) throw erro;
   }
 }
@@ -210,7 +227,8 @@ function migrar(db) {
 export function abrirBanco(caminho = CAMINHO_PADRAO) {
   if (caminho !== ':memory:') mkdirSync(dirname(caminho), { recursive: true });
   const db = new DatabaseSync(caminho);
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
+  // busy_timeout primeiro: sem ele, quem abre junto com outro processo falha na hora em vez de esperar.
+  db.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
   db.exec(ESQUEMA);
   migrar(db);
   return db;

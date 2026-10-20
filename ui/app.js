@@ -87,7 +87,7 @@ document.querySelector('[data-acao=importar]').addEventListener('click', importa
 
 async function atualizar() {
   if (!estado.planoId) return;
-  estado.materias = await chamar('materias', estado.planoId);
+  estado.materias = (await chamar('materias', estado.planoId)).map((m) => ({ ...m, meta_acerto: Number(m.meta_acerto) || null }));
   estado.cores = new Map(estado.materias.map((m, i) => [m.id, m.cor || PALETA[i % PALETA.length]]));
   if (estado.tela === 'inicio') await telaInicio();
   if (estado.tela === 'ciclo') await telaCiclo();

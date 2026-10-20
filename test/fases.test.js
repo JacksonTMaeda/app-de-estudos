@@ -297,3 +297,29 @@ test('banco aberto só para leitura e ainda não migrado não quebra', async () 
   db.close();
   assert.ok(existsSync(caminho));
 });
+
+test('app e MCP abrindo o banco da 1.0.5 ao mesmo tempo: um migra, nenhum quebra', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { spawn } = await import('node:child_process');
+  for (let rodada = 0; rodada < 3; rodada++) {
+    const caminho = join(mkdtempSync(join(tmpdir(), 'corrida-')), 'estudos.db');
+    const velho = new DatabaseSync(caminho);
+    velho.exec(ESQUEMA_1_0_5);
+    velho.exec("INSERT INTO plano (id, nome) VALUES (1, 'P'); INSERT INTO materia (id, plano_id, nome, posicao) VALUES (1, 1, 'A', 1);");
+    velho.exec('INSERT INTO ciclo VALUES (1, 1, 840, 45, 90, 15)');
+    for (let b = 0; b < 50; b++) velho.prepare('INSERT INTO bloco VALUES (?, 1, 1, 1, ?, 60, 0)').run(b + 1, b + 1);
+    velho.close();
+    const abrir = `import { abrirBanco } from ${JSON.stringify(new URL('../src/db.js', import.meta.url).href)};
+      const db = abrirBanco(process.argv[1]); console.log(db.prepare('SELECT COUNT(*) n FROM bloco').get().n); db.close();`;
+    const processo = () => new Promise((ok) => {
+      const p = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', '--input-type=module', '-e', abrir, caminho]);
+      let saida = '';
+      let erro = '';
+      p.stdout.on('data', (d) => (saida += d));
+      p.stderr.on('data', (d) => (erro += d));
+      p.on('exit', (codigo) => ok({ codigo, saida: saida.trim(), erro }));
+    });
+    const resultados = await Promise.all([processo(), processo(), processo()]);
+    for (const r of resultados) assert.deepEqual([r.codigo, r.saida], [0, '50'], r.erro);
+  }
+});
