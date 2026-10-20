@@ -212,3 +212,90 @@ test('Claude vê os materiais, marca a página, liga à matéria e relê a pasta
   assert.equal((await chamarFerramenta(c, 'ligar_material', { material_id: bizu.id, materia: 'Lógica' })).dados.materia, 'Lógica');
   assert.equal((await chamarFerramenta(c, 'materiais', { materia: 'Lógica' })).dados.materiais.length, 1);
 });
+
+test('Claude cadastra fase, vê a virada, conta o bloco misturado e ajusta lotes, metas e preferências', async (t) => {
+  const caminho = bancoDeTeste();
+  const c = conversar(caminho);
+  t.after(() => c.fechar());
+  await c.pedir('initialize', { protocolVersion: '2025-06-18' });
+  const hoje = s.dataLocal();
+  const longe = (dias) => {
+    const d = new Date();
+    d.setDate(d.getDate() + dias);
+    return s.dataLocal(d);
+  };
+
+  const sem = await chamarFerramenta(c, 'ver_fases');
+  assert.equal(sem.dados.fases.length, 0);
+
+  const misto = await chamarFerramenta(c, 'definir_fase', { nome: 'Errada', inicio: hoje, fim: longe(10), materias: [{ materia: 'Português', peso: 9 }] });
+  assert.ok(misto.erro && /Faltou em: Lógica/.test(misto.dados));
+
+  const def = await chamarFerramenta(c, 'definir_fase', {
+    nome: 'Foco Português', inicio: longe(-5), fim: longe(10), minutos_por_volta: 180, questoes_misturadas_min: 30, teto_semanal_min: 600,
+    materias: [{ materia: 'Português', peso: 3, grupo_foco: 'Crase' }, { materia: 'Lógica', peso: 1, tipo: 'revisao' }],
+  });
+  assert.equal(def.erro, undefined, def.dados);
+  assert.equal(def.dados.ciclo_refeito, true);
+  assert.deepEqual(def.dados.virada_de_fase, { de: null, para: 'Foco Português' });
+  assert.ok(existsSync(join(caminho, '..', 'copias')));
+
+  const sobreposta = await chamarFerramenta(c, 'definir_fase', { nome: 'Outra', inicio: longe(5), fim: longe(20) });
+  assert.ok(sobreposta.erro && /sobrepõe/.test(sobreposta.dados));
+  await chamarFerramenta(c, 'definir_fase', { nome: 'Depois', inicio: longe(11), fim: longe(40) });
+
+  const plano = await chamarFerramenta(c, 'ver_plano');
+  assert.equal(plano.dados.virada_de_fase, undefined, 'a segunda leitura não refaz');
+  assert.equal(plano.dados.fase_ativa.nome, 'Foco Português');
+  assert.equal(plano.dados.fase_ativa.dias_ate_o_fim, 10);
+  assert.deepEqual(plano.dados.proxima_fase, { nome: 'Depois', comeca_em: longe(11), dias_ate_a_virada: 11 });
+  assert.deepEqual(plano.dados.materias.map((m) => m.peso_no_ciclo_pct), [75, 25]);
+  assert.deepEqual(plano.dados.semana, { modo: 'meta', teto_min: 600 });
+
+  const fasesVistas = await chamarFerramenta(c, 'ver_fases');
+  assert.deepEqual(fasesVistas.dados.fases.map((f) => [f.nome, f.ativa]), [['Foco Português', true], ['Depois', false]]);
+
+  // Pula os blocos de conteúdo até chegar no misturado, que conta com estudo de questões de qualquer matéria.
+  let proximo = await chamarFerramenta(c, 'proximo_estudo');
+  assert.equal(proximo.dados.fase, 'Foco Português');
+  assert.ok(['teoria', 'revisao'].includes(proximo.dados.proximo.tipo));
+  for (let i = 0; i < 10 && proximo.dados.proximo.tipo !== 'questoes'; i++) {
+    const m = proximo.dados.proximo.materia;
+    await chamarFerramenta(c, 'registrar_estudo', { materia: m, tipo: proximo.dados.proximo.tipo, minutos: 10, conta_no_ciclo: true });
+    proximo = await chamarFerramenta(c, 'proximo_estudo');
+  }
+  assert.equal(proximo.dados.proximo.materia, 'Questões misturadas (todas as matérias)');
+  assert.equal(proximo.dados.proximo.minutos, 30);
+  const teoria = await chamarFerramenta(c, 'registrar_estudo', { materia: 'Lógica', tipo: 'teoria', minutos: 30, conta_no_ciclo: true });
+  assert.equal(teoria.dados.contou_no_ciclo, false);
+  const quest = await chamarFerramenta(c, 'registrar_estudo', { materia: 'Lógica', tipo: 'questoes', minutos: 30, conta_no_ciclo: true });
+  assert.equal(quest.dados.contou_no_ciclo, true);
+
+  const refeito = await chamarFerramenta(c, 'refazer_ciclo', { minutos_por_volta: 240 });
+  assert.match(refeito.dados.aviso, /define 180 min por volta/);
+
+  const meta = await chamarFerramenta(c, 'definir_meta_acerto', { materia: 'portugues', meta_pct: 80 });
+  assert.equal(meta.dados.meta_acerto_pct, 80);
+  const pref = await chamarFerramenta(c, 'ajustar_preferencias', { intervalos_revisao: [30, 1, 7], modo_semana: 'teto', teto_semanal_min: 1200 });
+  assert.deepEqual(pref.dados.intervalos_revisao, [1, 7, 30]);
+  assert.equal(pref.dados.modo_semana, 'teto');
+  assert.equal(pref.dados.teto_valendo_agora, 600, 'o teto da fase vale sobre o do plano');
+
+  await chamarFerramenta(c, 'adicionar_questoes', {
+    materia: 'Português', lote: 'Prova UEL 2025', questoes: [{ enunciado: 'x', alternativas: ['a', 'b'], correta: 0 }],
+  });
+  const reserva = await chamarFerramenta(c, 'reservar_lote', { lote: 'Prova UEL 2025', libera_em: '2027-09-01' });
+  assert.deepEqual([reserva.dados.lote, reserva.dados.reservado], ['claude/Prova UEL 2025', true]);
+  const depois = await chamarFerramenta(c, 'ver_plano');
+  assert.deepEqual(depois.dados.lotes_reservados, [{ lote: 'claude/Prova UEL 2025', questoes: 1, libera_em: '2027-09-01' }]);
+  assert.equal(depois.dados.materias[0].meta_acerto_pct, 80);
+
+  const apagada = await chamarFerramenta(c, 'apagar_fase', { nome: 'Foco Português' });
+  assert.equal(apagada.dados.ciclo_refeito, true);
+  const semFase = await chamarFerramenta(c, 'proximo_estudo');
+  assert.equal(semFase.dados.fase, null);
+  assert.equal((await chamarFerramenta(c, 'ver_plano')).dados.ciclo.minutos_por_volta, 240, 'sem a fase, vale o tempo do plano');
+
+  const sims = await chamarFerramenta(c, 'resultado_simulados');
+  assert.deepEqual(sims.dados.simulados, []);
+});

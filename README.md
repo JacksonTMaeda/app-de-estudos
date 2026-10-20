@@ -21,8 +21,10 @@ O programa se atualiza sozinho: ao abrir (e a cada 6 horas) ele confere as relea
 
 - **Início:** tempo do dia e da semana, desempenho, progresso no edital, próximo estudo do ciclo com cronômetro, revisões do dia, constância.
 - **Ciclo:** peso da matéria = `2 ^ (-conhecimento) × importância`, em blocos de 45 a 90 min. Matéria cujo tempo não chega ao bloco mínimo entra em volta sim, volta não.
-- **Questões:** importa quizzes em HTML, filtra por matéria, banca e situação, corrige com comentário e pergunta a causa de cada erro.
-- **Análise:** acerto por semana, matéria, banca e tema, causas dos erros, questões para refazer.
+- **Fases (opcional):** um plano pode ter etapas com data. Na fase ativa valem o peso manual de cada matéria, o tipo do bloco (teoria, revisão ou questões), as matérias fora da fase, o grupo de assuntos em foco, o tempo por volta e um bloco de questões misturadas no fim da volta. Na virada de fase o ciclo é refeito sozinho, com cópia do banco antes. Plano sem fase funciona como antes. As fases se cadastram pelo Claude; a tela Ciclo mostra.
+- **Semana como meta ou teto:** no modo teto, o tempo da semana é limite e a tela não mostra o que faltou como atraso.
+- **Questões:** importa quizzes em HTML, filtra por matéria, banca, lote e situação, corrige com comentário e pergunta a causa de cada erro. Lote reservado (cadeado) fica fora das rodadas até a data de liberação. **Simulado:** X questões por matéria, cronômetro único (com tempo limite opcional), gabarito e resultado por matéria só na entrega.
+- **Análise:** acerto por semana, matéria (com a meta de acerto, se houver), banca e tema, causas dos erros, questões para refazer.
 - **Materiais:** escolha a pasta dos PDFs; cada subpasta com o nome de uma matéria fica ligada a ela (dá para trocar à mão). O leitor abre na página onde você parou, com zoom e texto selecionável. O PDF fica onde está: o app guarda só o caminho e a página.
 - **Edital** e **Histórico** (corrigir e apagar estudo).
 
@@ -30,9 +32,11 @@ O programa se atualiza sozinho: ao abrir (e a cada 6 horas) ele confere as relea
 
 `src/mcp.js` deixa o Claude consultar e mexer no app ao vivo:
 
-- **Ler:** `ver_plano`, `proximo_estudo`, `resumo_periodo`, `revisoes_pendentes`, `historico_sessoes`, `analise_questoes`, `assuntos_da_materia`, `materiais` (PDFs com a página onde parou e o caminho do arquivo).
-- **Gravar:** `registrar_estudo`, `corrigir_estudo`, `marcar_assunto`, `concluir_revisao`, `ajustar_conhecimento`, `refazer_ciclo`, `definir_data_prova`, `adicionar_questoes`, `criar_plano`, `marcar_pagina_material`, `ligar_material`, `atualizar_materiais`.
-- **Apagar:** `apagar_estudo`, `apagar_questao`, `apagar_plano` (este exige o nome exato do plano). Antes de apagar, o servidor guarda uma cópia do banco.
+- **Ler:** `ver_plano`, `proximo_estudo`, `resumo_periodo`, `revisoes_pendentes`, `historico_sessoes`, `analise_questoes`, `assuntos_da_materia`, `materiais` (PDFs com a página onde parou e o caminho do arquivo), `ver_fases`, `lotes_de_questoes`, `resultado_simulados`.
+- **Gravar:** `registrar_estudo`, `corrigir_estudo`, `marcar_assunto`, `concluir_revisao`, `ajustar_conhecimento`, `refazer_ciclo`, `definir_data_prova`, `adicionar_questoes`, `criar_plano`, `marcar_pagina_material`, `ligar_material`, `atualizar_materiais`, `definir_fase`, `reservar_lote`, `definir_meta_acerto`, `ajustar_preferencias`.
+- **Apagar:** `apagar_estudo`, `apagar_questao`, `apagar_plano` (este exige o nome exato do plano), `apagar_fase`. Antes de apagar, o servidor guarda uma cópia do banco.
+
+O servidor também faz a virada de fase sozinho, sem a janela aberta.
 
 Roda com o Node que vem dentro do programa. Registro no Claude Code, com o programa instalado (troque `<você>` pelo seu usuário do Windows):
 

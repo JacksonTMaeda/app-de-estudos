@@ -26,6 +26,14 @@ const hojeISO = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
+// Dias de hoje até a data (YYYY-MM-DD), contados no calendário local.
+const diasAte = (iso) => {
+  const [a, m, d] = iso.split('-').map(Number);
+  const [ha, hm, hd] = hojeISO().split('-').map(Number);
+  return Math.round((Date.UTC(a, m - 1, d) - Date.UTC(ha, hm - 1, hd)) / 86400000);
+};
+const nomeLote = (lote) => lote.replace(/^claude\//, '');
+const nomeMateria = (id) => estado.materias.find((m) => m.id === id)?.nome ?? 'Sem matéria';
 
 // ---------- navegação ----------
 document.querySelectorAll('nav button').forEach((b) =>
@@ -103,10 +111,24 @@ async function telaInicio() {
   estado.proximo = proximo;
 
   $('#n-hoje').textContent = horas(r.hoje);
-  $('#n-semana').textContent = r.metaSemanal
-    ? `Nesta semana: ${horas(r.semana)} de ${horas(r.metaSemanal)}`
-    : `Nesta semana: ${horas(r.semana)}`;
-  $('#b-semana').style.width = r.metaSemanal ? `${Math.min(100, (r.semana / r.metaSemanal) * 100)}%` : '0';
+  const barraSemana = $('#b-semana').parentElement;
+  barraSemana.classList.remove('neutra', 'passou');
+  if (r.modoSemana === 'teto') {
+    // Teto é limite, não meta: sem cor nem texto de atraso; só avisa quando passa dele.
+    const passou = r.tetoSemanal && r.semana > r.tetoSemanal;
+    $('#n-semana').textContent = !r.tetoSemanal
+      ? `Nesta semana: ${horas(r.semana)}`
+      : passou
+        ? `Nesta semana: ${horas(r.semana)}, acima do teto de ${horas(r.tetoSemanal)}`
+        : `Nesta semana: ${horas(r.semana)} de até ${horas(r.tetoSemanal)}`;
+    barraSemana.classList.add(passou ? 'passou' : 'neutra');
+    $('#b-semana').style.width = r.tetoSemanal ? `${Math.min(100, (r.semana / r.tetoSemanal) * 100)}%` : '0';
+  } else {
+    $('#n-semana').textContent = r.metaSemanal
+      ? `Nesta semana: ${horas(r.semana)} de ${horas(r.metaSemanal)}`
+      : `Nesta semana: ${horas(r.semana)}`;
+    $('#b-semana').style.width = r.metaSemanal ? `${Math.min(100, (r.semana / r.metaSemanal) * 100)}%` : '0';
+  }
 
   const totalQ = r.questoes.acertos + r.questoes.erros;
   $('#n-desempenho').textContent = r.questoes.desempenho === null ? 'sem questões' : pct(r.questoes.desempenho);
@@ -146,20 +168,22 @@ function desenharProximo(p) {
     return;
   }
   $('#p-progresso').textContent = `${p.progresso.feitos} de ${p.progresso.total} blocos do ciclo`;
+  const misto = p.materia_id == null;
+  const tipo = p.fase || p.tipo !== 'teoria' ? ` · ${TIPO[p.tipo]}` : '';
   alvo.innerHTML = `<div class="proximo">
-      <div class="faixa" style="background:${cor(p.materia_id, p.cor)}"></div>
+      <div class="faixa ${misto ? 'misto' : ''}" style="${misto ? '' : `background:${cor(p.materia_id, p.cor)}`}"></div>
       <div class="texto-proximo">
-        <span class="etiqueta">Volta ${p.volta} · ${p.duracao_min} min</span>
-        <h3>${esc(p.materia)}</h3>
-        <p class="sutil">${p.topico ? esc(p.topico.nome) : 'Todos os assuntos concluídos'}</p>
+        <span class="etiqueta">Volta ${p.volta} · ${p.duracao_min} min${tipo}</span>
+        <h3>${misto ? 'Questões misturadas' : esc(p.materia)}</h3>
+        <p class="sutil">${misto ? 'Todas as matérias, embaralhadas, sem os lotes reservados' : p.topico ? esc(p.topico.nome) : 'Todos os assuntos concluídos'}</p>
       </div>
       <div class="acoes" ${cronometro.inicio ? 'hidden' : ''}>
         <button class="texto" id="pular">Pular</button>
-        <button class="primario" id="iniciar">▶ Iniciar estudo</button>
+        <button class="primario" id="iniciar">${misto ? '▶ Começar questões' : '▶ Iniciar estudo'}</button>
       </div>
     </div>`;
   $('#cronometro').hidden = !cronometro.inicio;
-  $('#iniciar')?.addEventListener('click', iniciarCronometro);
+  $('#iniciar')?.addEventListener('click', () => (misto ? comecarMisto(p) : iniciarCronometro()));
   $('#pular')?.addEventListener('click', async () => {
     await chamar('pularBloco', p.id);
     atualizar();
@@ -222,6 +246,7 @@ function iniciarCronometro() {
     bloco_id: p?.id ?? null,
     materia_id: p?.materia_id ?? null,
     topico_id: p?.topico?.id ?? null,
+    tipo: p?.tipo ?? 'teoria',
   });
   salvarCronometro();
   desenharProximo(p);
@@ -246,6 +271,7 @@ $('#finalizar').addEventListener('click', () => {
     materia_id: cronometro.materia_id,
     topico_id: cronometro.topico_id,
     bloco_id: cronometro.bloco_id,
+    tipo: cronometro.tipo,
     duracao_min: Math.max(1, Math.round(segundosCorridos() / 60)),
     inicioMs: cronometro.inicio,
     doCronometro: true,
@@ -329,15 +355,28 @@ dialogo.addEventListener('close', async () => {
 });
 
 // ---------- ciclo ----------
+const EXPLICA_CICLO = 'Matéria grande entra em toda volta; matéria pequena, em volta sim, volta não. O peso vem do número de questões e do quanto você já conhece a matéria (ajuste na aba Edital).';
+const EXPLICA_FASE = 'Nesta fase, as matérias do ciclo, os pesos e o tipo de cada bloco seguem o que foi cadastrado para ela. Quando a fase muda, o ciclo é refeito sozinho e a fila recomeça.';
+
 async function telaCiclo() {
-  const ciclo = await chamar('ciclo', estado.planoId);
+  const [ciclo, fases] = await Promise.all([chamar('ciclo', estado.planoId), chamar('fases', estado.planoId)]);
+  desenharFases(fases);
   if (!ciclo) {
     $('#ciclo').innerHTML = '<p class="sutil">Sem ciclo.</p>';
     return;
   }
   const atual = ciclo.blocos.find((b) => !b.feito)?.id;
   const voltas = [...new Set(ciclo.blocos.map((b) => b.volta))];
+  const comTipo = !!ciclo.fase || ciclo.blocos.some((b) => b.tipo !== 'teoria' || b.misto);
   $('#ciclo-info').textContent = `${horas(ciclo.tempo_total_min)} por volta · blocos de ${ciclo.bloco_min} a ${ciclo.bloco_max} min`;
+  const f = ciclo.fase;
+  const prox = ciclo.proximaFase;
+  $('#ciclo-fase').hidden = !f && !prox;
+  $('#ciclo-fase').innerHTML = f
+    ? `<strong>Fase: ${esc(f.nome)}</strong><span class="sutil">${dataBR(f.inicio)} a ${dataBR(f.fim)}</span>
+       <span class="sutil">${prox ? `${diasAte(prox.inicio)} dias até a fase ${esc(prox.nome)}` : `última fase, termina daqui a ${diasAte(f.fim)} dias`}</span>`
+    : prox ? `<span class="sutil">Sem fase agora. A fase ${esc(prox.nome)} começa em ${dataBR(prox.inicio)}, daqui a ${diasAte(prox.inicio)} dias.</span>` : '';
+  $('#ciclo-explica').textContent = f ? EXPLICA_FASE : EXPLICA_CICLO;
   $('#ciclo').innerHTML = voltas
     .map((v) => {
       const blocos = ciclo.blocos.filter((b) => b.volta === v);
@@ -345,10 +384,39 @@ async function telaCiclo() {
       return `<div class="volta"><h3>Volta ${v} de ${voltas.length} · ${horas(soma)}</h3><div class="blocos">${blocos
         .map((b) => `<div class="bloco ${b.feito ? 'feito' : ''} ${b.id === atual ? 'atual' : ''}">
             <span class="pos">${b.feito ? '✓' : b.posicao}</span>
-            <span class="bola" style="width:10px;height:10px;border-radius:50%;background:${cor(b.materia_id, b.cor)}"></span>
-            <span>${esc(b.materia)}</span>
+            <span class="bola ${b.misto ? 'misto' : ''}" style="width:10px;height:10px;border-radius:50%;${b.misto ? '' : `background:${cor(b.materia_id, b.cor)}`}"></span>
+            <span>${b.misto ? 'Questões misturadas' : esc(b.materia)}</span>
+            ${comTipo ? `<span class="selo ${b.tipo}">${TIPO[b.tipo]}</span>` : ''}
             <span class="min">${b.duracao_min}'</span></div>`)
         .join('')}</div></div>`;
+    })
+    .join('');
+}
+
+// Fases cadastradas (pelo Claude, via MCP). Nesta versão a tela só mostra.
+function desenharFases({ lista, ativa }) {
+  $('#cartao-fases').hidden = lista.length === 0;
+  $('#fases').innerHTML = lista
+    .map((f) => {
+      const detalhes = [
+        f.minutos_por_volta && `${horas(f.minutos_por_volta)} por volta`,
+        f.questoes_mistas_min && `${f.questoes_mistas_min} min de questões misturadas por volta`,
+        f.teto_semanal_min && `teto de ${horas(f.teto_semanal_min)} por semana`,
+        f.anotacao && esc(f.anotacao),
+      ].filter(Boolean).join(' · ');
+      const materias = f.materias
+        .map((m) => {
+          const partes = m.fora
+            ? ['fora da fase']
+            : [m.peso != null && `peso ${m.peso}`, m.tipo !== 'teoria' && TIPO[m.tipo], m.grupo_foco && `foco: ${esc(m.grupo_foco)}`].filter(Boolean);
+          return `<span class="selo ${m.fora ? '' : m.tipo}">${esc(m.materia)}${partes.length ? `: ${partes.join(', ')}` : ''}</span>`;
+        })
+        .join('');
+      return `<div class="fase ${f.id === ativa ? 'ativa' : ''}">
+          <div class="cabeca"><h3>${esc(f.nome)} ${f.id === ativa ? '<span class="etiqueta">agora</span>' : ''}</h3>
+            <span class="sutil">${dataBR(f.inicio)} a ${dataBR(f.fim)}</span></div>
+          ${detalhes ? `<p class="sutil">${detalhes}</p>` : ''}
+          <div class="conf">${materias}</div></div>`;
     })
     .join('');
 }
@@ -365,7 +433,8 @@ function telaEdital() {
           <span class="bola" style="width:12px;height:12px;border-radius:50%;background:${cor(m.id, m.cor)}"></span>
           <span class="nome">${esc(m.nome)}</span>
           <span class="num">${horas(m.minutos)} estudados</span>
-          <span class="num">${q ? `${pct(m.acertos / q)} em ${q} questões` : 'sem questões'}</span>
+          <span class="num">${q ? `${pct(m.acertos / q)} em ${q} questões` : 'sem questões'}${m.meta_acerto
+            ? `<br><span class="meta-acerto ${q && (m.acertos / q) * 100 >= m.meta_acerto ? 'batida' : ''}">meta ${m.meta_acerto}%</span>` : ''}</span>
           <span class="num">${feitos} de ${m.topicos.length} assuntos</span>
           <div class="barra mini"><div style="width:${m.topicos.length ? (feitos / m.topicos.length) * 100 : 0}%"></div></div>
         </summary>
@@ -416,13 +485,16 @@ function filtrosDeQuestao() {
     materiaId: Number($('#q-materia').value) || null,
     origem: $('#q-origem').value,
     situacao: $('#q-situacao').value,
+    lote: $('#q-lote').value || null,
     limite: 2000,
   };
 }
 
 async function telaQuestoes() {
-  if (!$('#q-resolver').hidden) return; // não mexe numa rodada em andamento
-  const [resumo, bancas] = await Promise.all([chamar('resumoQuestoes', estado.planoId), chamar('bancas', estado.planoId)]);
+  if (!$('#q-resolver').hidden || !$('#q-simulado').hidden) return; // não mexe numa rodada ou simulado em andamento
+  const [resumo, bancas, lotes] = await Promise.all([
+    chamar('resumoQuestoes', estado.planoId), chamar('bancas', estado.planoId), chamar('lotes', estado.planoId),
+  ]);
   const mantem = (sel, html) => {
     const atual = sel.value;
     sel.innerHTML = html;
@@ -430,6 +502,12 @@ async function telaQuestoes() {
   };
   mantem($('#q-materia'), `<option value="">Todas as matérias</option>${estado.materias.map((m) => `<option value="${m.id}">${esc(m.nome)}</option>`).join('')}`);
   mantem($('#q-origem'), `<option value="todas">Banca e autorais</option><option value="banca">Só de banca</option><option value="autoral">Só autorais</option>${bancas.map((b) => `<option value="${esc(b.banca)}">${esc(b.banca)} (${b.total})</option>`).join('')}`);
+  // Lote reservado (cadeado) fica fora das rodadas; só entra escolhendo o lote ou no simulado.
+  const opcaoLote = (l) => `<option value="${esc(l.lote)}">${l.reservado ? '🔒 ' : ''}${esc(nomeLote(l.lote))} (${l.questoes})${
+    l.reservado ? (l.libera_em ? `, libera em ${dataBR(l.libera_em)}` : ', reservado') : ''}</option>`;
+  estado.haReservados = lotes.some((l) => l.reservado);
+  mantem($('#q-lote'), `<option value="">${estado.haReservados ? 'Todos, sem os reservados' : 'Todos os lotes'}</option>${lotes.map(opcaoLote).join('')}`);
+  mantem($('#s-lote'), `<option value="">Todos, sem os reservados</option>${estado.haReservados ? '<option value="*">Todos, com os reservados</option>' : ''}${lotes.map(opcaoLote).join('')}`);
   $('#q-resumo').innerHTML = resumo.length
     ? resumo.map((r) => `<tr><td>${esc(r.materia ?? 'Sem matéria')}</td><td>${r.total}</td><td>${r.respondidas}</td>
         <td>${r.respostas ? pct(r.acertos / r.respostas) : ''}</td></tr>`).join('')
@@ -443,7 +521,7 @@ async function contarDisponiveis() {
   $('#q-comecar').disabled = lista.length === 0;
   return lista;
 }
-['#q-materia', '#q-origem', '#q-situacao'].forEach((s) => $(s).addEventListener('change', contarDisponiveis));
+['#q-materia', '#q-origem', '#q-situacao', '#q-lote'].forEach((s) => $(s).addEventListener('change', contarDisponiveis));
 
 $('#q-importar').addEventListener('click', async () => {
   const relatorio = await chamar('importarQuizzes', estado.planoId);
@@ -465,8 +543,9 @@ $('#q-comecar').addEventListener('click', async () => {
   iniciarRodada(lista.slice(0, Number($('#q-quantas').value)));
 });
 
-function iniciarRodada(lista) {
-  Object.assign(rodada, { lista, i: 0, respostas: [], inicio: Date.now() });
+// blocoId: a rodada é o bloco de questões misturadas do ciclo; ao encerrar com resposta, o bloco conta como feito.
+function iniciarRodada(lista, { blocoId = null } = {}) {
+  Object.assign(rodada, { lista, i: 0, respostas: [], inicio: Date.now(), blocoId });
   $('#q-escolha').hidden = true;
   $('#q-fim').hidden = true;
   $('#q-resolver').hidden = false;
@@ -545,6 +624,13 @@ $('#q-encerrar').addEventListener('click', encerrarRodada);
 
 // Teclado: A a E (ou 1 a 5) escolhe, Enter responde e avança.
 document.addEventListener('keydown', (e) => {
+  if (!$('#q-simulado').hidden && !dialogo.open && !e.ctrlKey && !e.altKey) {
+    const k = 'abcdef'.indexOf(e.key.toLowerCase()) >= 0 ? 'abcdef'.indexOf(e.key.toLowerCase()) : '123456'.indexOf(e.key);
+    if (k >= 0 && k < sim.lista[sim.i].alternativas.length) escolherSim(k);
+    if (e.key === 'ArrowRight') irParaSim(sim.i + 1);
+    if (e.key === 'ArrowLeft') irParaSim(sim.i - 1);
+    return;
+  }
   if ($('#q-resolver').hidden || dialogo.open || e.ctrlKey || e.altKey) return;
   const n = 'abcdef'.indexOf(e.key.toLowerCase()) >= 0 ? 'abcdef'.indexOf(e.key.toLowerCase()) : '123456'.indexOf(e.key);
   if (n >= 0 && n < rodada.lista[rodada.i].alternativas.length) escolher(n);
@@ -573,7 +659,9 @@ async function encerrarRodada() {
         anotacao: `Banco de questões do app: ${m.acertos + m.erros} questões`,
       });
     }
+    if (rodada.blocoId) await chamar('pularBloco', rodada.blocoId);
   }
+  rodada.blocoId = null;
   const acertos = respostas.filter((r) => r.acertou).length;
   $('#q-resolver').hidden = true;
   $('#q-fim').hidden = false;
@@ -591,6 +679,184 @@ async function encerrarRodada() {
   });
 }
 
+// Bloco de questões misturadas: uma questão a cada 3 minutos do bloco, primeiro as nunca respondidas.
+async function comecarMisto(p) {
+  const n = Math.max(5, Math.round(p.duracao_min / 3));
+  let lista = await chamar('questoes', estado.planoId, { situacao: 'nao_respondidas', aleatoria: true, limite: n });
+  if (lista.length < n) {
+    const ja = new Set(lista.map((q) => q.id));
+    const mais = await chamar('questoes', estado.planoId, { aleatoria: true, limite: n * 2 });
+    lista = [...lista, ...mais.filter((q) => !ja.has(q.id))].slice(0, n);
+  }
+  if (lista.length === 0) {
+    alert('Ainda não há questões no banco para o bloco misturado.');
+    return;
+  }
+  mostrar('questoes');
+  iniciarRodada(lista, { blocoId: p.id });
+}
+
+// ---------- simulado ----------
+// Cronômetro único, sem correção durante a prova; o gabarito e o resultado por matéria saem na entrega.
+const sim = { lista: [], i: 0, escolhas: [], segundos: [], inicio: 0, limiteMin: 0, lote: null, abertaEm: 0, tique: null, entregando: false };
+
+$('#s-montar').addEventListener('click', async () => {
+  const n = Math.round(Number($('#s-por-materia').value) || 0);
+  if (n < 1) return;
+  const escolha = $('#s-lote').value;
+  const pedido = {
+    porMateria: Object.fromEntries(estado.materias.map((m) => [m.id, n])),
+    lote: escolha && escolha !== '*' ? escolha : null,
+    incluirReservados: escolha === '*',
+  };
+  const { questoes, faltas } = await chamar('montarSimulado', estado.planoId, pedido);
+  if (questoes.length === 0) {
+    $('#s-aviso').textContent = 'Nenhuma questão com essa escolha.';
+    return;
+  }
+  $('#s-aviso').textContent = '';
+  if (faltas.length) {
+    const lista = faltas.map((f) => `${nomeMateria(f.materia_id)}: ${f.achadas} de ${f.pedidas}`).join('\n');
+    if (!confirm(`Não há questões suficientes em:\n${lista}\n\nFazer o simulado com ${questoes.length} questões mesmo assim?`)) return;
+  }
+  iniciarSimulado(questoes, { limiteMin: Math.round(Number($('#s-tempo').value) || 0), lote: pedido.lote });
+});
+
+function iniciarSimulado(lista, { limiteMin, lote }) {
+  Object.assign(sim, {
+    lista, i: 0, escolhas: lista.map(() => null), segundos: lista.map(() => 0),
+    inicio: Date.now(), limiteMin, lote, abertaEm: Date.now(), entregando: false,
+  });
+  $('#q-escolha').hidden = true;
+  $('#q-fim').hidden = true;
+  $('#q-simulado').hidden = false;
+  clearInterval(sim.tique);
+  sim.tique = setInterval(relogioSimulado, 1000);
+  relogioSimulado();
+  mostrarQuestaoSim();
+}
+
+function relogioSimulado() {
+  const corridos = Math.floor((Date.now() - sim.inicio) / 1000);
+  const z = (n) => String(n).padStart(2, '0');
+  const fmt = (t) => `${t >= 3600 ? `${Math.floor(t / 3600)}:` : ''}${z(Math.floor((t % 3600) / 60))}:${z(t % 60)}`;
+  if (sim.limiteMin) {
+    const resta = Math.max(0, sim.limiteMin * 60 - corridos);
+    $('#sim-relogio').textContent = `faltam ${fmt(resta)}`;
+    $('#sim-relogio').classList.toggle('acabando', resta < 300);
+    if (resta === 0) entregarSimulado(true);
+  } else {
+    $('#sim-relogio').textContent = fmt(corridos);
+  }
+}
+
+function anotarTempoSim() {
+  sim.segundos[sim.i] += (Date.now() - sim.abertaEm) / 1000;
+  sim.abertaEm = Date.now();
+}
+
+function irParaSim(k) {
+  if (k < 0 || k >= sim.lista.length) return;
+  anotarTempoSim();
+  sim.i = k;
+  mostrarQuestaoSim();
+}
+
+function mostrarQuestaoSim() {
+  const q = sim.lista[sim.i];
+  const feitas = sim.escolhas.filter((e) => e !== null).length;
+  $('#sim-posicao').textContent = `Questão ${sim.i + 1} de ${sim.lista.length} · ${feitas} respondidas`;
+  $('#sim-mapa').innerHTML = sim.lista
+    .map((_, k) => `<button data-k="${k}" class="${sim.escolhas[k] !== null ? 'respondida' : ''} ${k === sim.i ? 'aqui' : ''}">${k + 1}</button>`)
+    .join('');
+  $('#sim-mapa').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => irParaSim(Number(b.dataset.k))));
+  $('#sim-meta').innerHTML = [
+    q.materia && `<span class="etiqueta">${esc(q.materia)}</span>`,
+    q.fonte && `<span class="etiqueta ${ehBanca(q.fonte) ? 'banca' : ''}">${esc(ehBanca(q.fonte) ? q.fonte : 'Autoral')}</span>`,
+  ].filter(Boolean).join('');
+  $('#sim-enunciado').innerHTML = limparHtml(q.enunciado);
+  $('#sim-alternativas').innerHTML = q.alternativas
+    .map((a, k) => `<button class="alt ${sim.escolhas[sim.i] === k ? 'escolhida' : ''}" data-i="${k}"><span class="letra">${LETRAS[k]}</span><span>${limparHtml(a)}</span></button>`)
+    .join('');
+  $('#sim-alternativas').querySelectorAll('.alt').forEach((b) => b.addEventListener('click', () => escolherSim(Number(b.dataset.i))));
+  $('#sim-anterior').disabled = sim.i === 0;
+  $('#sim-seguinte').disabled = sim.i === sim.lista.length - 1;
+  document.querySelector('main').scrollTop = 0;
+}
+
+// Clicar de novo na mesma alternativa deixa a questão em branco.
+function escolherSim(k) {
+  sim.escolhas[sim.i] = sim.escolhas[sim.i] === k ? null : k;
+  mostrarQuestaoSim();
+}
+
+$('#sim-anterior').addEventListener('click', () => irParaSim(sim.i - 1));
+$('#sim-seguinte').addEventListener('click', () => irParaSim(sim.i + 1));
+$('#sim-entregar').addEventListener('click', () => entregarSimulado(false));
+$('#sim-desistir').addEventListener('click', () => {
+  if (!confirm('Sair do simulado sem corrigir? Nada é registrado.')) return;
+  fecharSimulado();
+  $('#q-escolha').hidden = false;
+  atualizar();
+});
+
+function fecharSimulado() {
+  clearInterval(sim.tique);
+  $('#q-simulado').hidden = true;
+}
+
+async function entregarSimulado(tempoAcabou) {
+  if (sim.entregando) return;
+  const brancas = sim.escolhas.filter((e) => e === null).length;
+  if (!tempoAcabou && brancas && !confirm(`${brancas} ${brancas === 1 ? 'questão está' : 'questões estão'} em branco e contam como erro. Entregar mesmo assim?`)) return;
+  sim.entregando = true;
+  anotarTempoSim();
+  const minutos = Math.max(1, Math.round((Date.now() - sim.inicio) / 60000));
+  const r = await chamar('corrigirSimulado', estado.planoId, {
+    respostas: sim.lista.map((q, k) => ({ questao_id: q.id, escolhida: sim.escolhas[k], segundos: sim.segundos[k] })),
+    minutos,
+    lote: sim.lote,
+  });
+  fecharSimulado();
+  mostrarResultadoSimulado(r, tempoAcabou);
+}
+
+function mostrarResultadoSimulado(r, tempoAcabou) {
+  const taxa = r.acertos / r.questoes;
+  const brancas = r.por_materia.reduce((a, m) => a + m.em_branco, 0);
+  const meta = (id) => estado.materias.find((m) => m.id === id)?.meta_acerto;
+  const linhas = r.por_materia
+    .map((m) => `<tr><td>${esc(m.materia)}</td><td>${m.questoes}</td><td>${m.acertos}</td>
+        <td style="color:${corDoAcerto(m.acertos / m.questoes)}"><strong>${pct(m.acertos / m.questoes)}</strong></td>
+        <td>${meta(m.materia_id) ? `${meta(m.materia_id)}%` : ''}</td></tr>`)
+    .join('');
+  const revisao = sim.lista
+    .map((q, k) => {
+      const g = r.gabarito[k];
+      const marca = g.escolhida === null ? '<span class="branco">–</span>' : g.acertou ? '<span class="ok">✓</span>' : '<span class="nao">✗</span>';
+      const alts = q.alternativas
+        .map((a, i) => `<div class="alt ${i === g.correta ? 'certa' : i === g.escolhida ? 'errada' : ''}"><span class="letra">${LETRAS[i]}</span><span>${limparHtml(a)}</span></div>`)
+        .join('');
+      return `<details><summary>${marca} <strong>${k + 1}.</strong> ${esc(q.materia ?? '')}${q.tema ? ` · ${esc(q.tema)}` : ''}
+          <span class="sutil">${g.escolhida === null ? 'em branco' : `marcou ${LETRAS[g.escolhida]}`}, gabarito ${LETRAS[g.correta]}</span></summary>
+        <div class="q-enunciado">${limparHtml(q.enunciado)}</div><div class="q-alternativas">${alts}</div>
+        ${q.comentario ? `<div class="q-comentario">${limparHtml(q.comentario)}</div>` : ''}</details>`;
+    })
+    .join('');
+  $('#q-fim').hidden = false;
+  $('#q-fim').innerHTML = `<h2>Simulado entregue${tempoAcabou ? ' (o tempo acabou)' : ''}</h2>
+    <div class="fim-numero" style="color:${corDoAcerto(taxa)}">${pct(taxa)}</div>
+    <p>${r.acertos} certas de ${r.questoes} em ${horas(r.minutos)}${brancas ? `, ${brancas} em branco` : ''}. Já está no histórico e no desempenho.</p>
+    <table class="tabela"><thead><tr><th>Matéria</th><th>Questões</th><th>Acertos</th><th>Acerto</th><th>Meta</th></tr></thead><tbody>${linhas}</tbody></table>
+    <h3>Gabarito</h3><div class="revisao-sim">${revisao}</div>
+    <div class="botoes"><button class="primario" id="q-voltar">Voltar</button></div>`;
+  $('#q-voltar').addEventListener('click', () => {
+    $('#q-fim').hidden = true;
+    $('#q-escolha').hidden = false;
+    atualizar();
+  });
+}
+
 // ---------- análise ----------
 let _causas = null;
 const causas = async () => (_causas ??= await chamar('causas'));
@@ -599,13 +865,18 @@ const tempoQ = (s) => (s == null ? '' : s >= 60 ? `${Math.floor(s / 60)}min${Str
 let paraRefazer = [];
 
 // Linhas de barra horizontal: nome, barra proporcional ao acerto e o número.
-function barrasDeAcerto(linhas, vazio) {
+// metas: Map nome -> meta (0 a 1); aparece como um traço na barra e ao lado do número.
+function barrasDeAcerto(linhas, vazio, metas = null) {
   if (!linhas.length) return `<p class="vazio-analise">${vazio}</p>`;
   return linhas
-    .map((l) => `<div class="linha-barra">
+    .map((l) => {
+      const meta = metas?.get(l.nome);
+      return `<div class="linha-barra">
         <span class="nome" title="${esc(l.materia ? `${l.materia}: ${l.nome}` : l.nome)}">${esc(l.nome)}</span>
-        <div class="trilho"><div style="width:${(l.acerto ?? 0) * 100}%;background:${corDoAcerto(l.acerto)}"></div></div>
-        <span class="valor"><strong>${l.acerto === null ? '' : pct(l.acerto)}</strong> de ${l.respostas}</span></div>`)
+        <div class="trilho"><div style="width:${(l.acerto ?? 0) * 100}%;background:${corDoAcerto(l.acerto)}"></div>${
+          meta != null ? `<span class="marca-meta" style="left:${meta * 100}%" title="meta ${pct(meta)}"></span>` : ''}</div>
+        <span class="valor"><strong>${l.acerto === null ? '' : pct(l.acerto)}</strong> de ${l.respostas}${meta != null ? ` · meta ${pct(meta)}` : ''}</span></div>`;
+    })
     .join('');
 }
 
@@ -640,7 +911,9 @@ async function telaAnalise() {
         .join('')
     : '<p class="vazio-analise">Quando errar, marque o porquê logo abaixo da correção.</p>';
 
-  $('#a-materias').innerHTML = barrasDeAcerto(a.porMateria, 'Sem respostas ainda.');
+  const metas = new Map(estado.materias.filter((m) => m.meta_acerto).map((m) => [m.nome, m.meta_acerto / 100]));
+  $('#a-materias').classList.toggle('com-meta', metas.size > 0);
+  $('#a-materias').innerHTML = barrasDeAcerto(a.porMateria, 'Sem respostas ainda.', metas);
   $('#a-bancas').innerHTML = barrasDeAcerto(a.porBanca, 'Sem respostas ainda.');
   $('#a-temas').innerHTML = barrasDeAcerto(a.pioresTemas, 'Nenhum tema com erro e 2 ou mais respostas ainda.');
 
@@ -771,7 +1044,7 @@ $('#l-voltar').addEventListener('click', () => mostrar('materiais'));
 // O Claude pode gravar no banco com o programa aberto: recarrega ao voltar para a janela e a cada 30 s,
 // menos no meio de uma rodada de questões ou com a janela de registro aberta.
 function recarregarSePuder() {
-  if (dialogo.open || !$('#q-resolver').hidden || document.hidden) return;
+  if (dialogo.open || !$('#q-resolver').hidden || !$('#q-simulado').hidden || document.hidden) return;
   carregarPlanos(estado.planoId);
 }
 window.addEventListener('focus', recarregarSePuder);

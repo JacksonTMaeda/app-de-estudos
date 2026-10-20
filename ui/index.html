@@ -94,8 +94,13 @@
     <section id="tela-ciclo" class="tela" hidden>
       <div class="cartao">
         <div class="cabeca"><h2>Ciclo de estudos</h2><span class="sutil" id="ciclo-info"></span></div>
-        <p class="sutil">Matéria grande entra em toda volta; matéria pequena, em volta sim, volta não. O peso vem do número de questões e do quanto você já conhece a matéria (ajuste na aba Edital).</p>
+        <div id="ciclo-fase" class="faixa-fase" hidden></div>
+        <p class="sutil" id="ciclo-explica">Matéria grande entra em toda volta; matéria pequena, em volta sim, volta não. O peso vem do número de questões e do quanto você já conhece a matéria (ajuste na aba Edital).</p>
         <div id="ciclo"></div>
+      </div>
+      <div class="cartao" id="cartao-fases" hidden>
+        <div class="cabeca"><h2>Fases do plano</h2><span class="sutil">cadastradas pelo Claude</span></div>
+        <div id="fases"></div>
       </div>
     </section>
 
@@ -106,6 +111,7 @@
           <div class="filtros">
             <label>Matéria <select id="q-materia"></select></label>
             <label>Origem <select id="q-origem"></select></label>
+            <label>Lote <select id="q-lote"></select></label>
             <label>Situação
               <select id="q-situacao">
                 <option value="nao_respondidas">Nunca respondidas</option>
@@ -117,6 +123,15 @@
             <label class="check"><input type="checkbox" id="q-embaralhar" checked> Embaralhar</label>
           </div>
           <div class="cabeca rodape"><span class="sutil" id="q-disponiveis"></span><button id="q-comecar" class="primario">Começar</button></div>
+        </div>
+        <div class="cartao">
+          <div class="cabeca"><h2>Simulado</h2><span class="sutil">cronômetro único, gabarito só no fim</span></div>
+          <div class="filtros">
+            <label>Questões por matéria <input id="s-por-materia" type="number" min="1" max="100" value="20"></label>
+            <label>Lote <select id="s-lote"></select></label>
+            <label>Tempo (min) <input id="s-tempo" type="number" min="0" step="5" placeholder="sem limite"></label>
+          </div>
+          <div class="cabeca rodape"><span class="sutil" id="s-aviso"></span><button id="s-montar" class="primario">Montar simulado</button></div>
         </div>
         <div class="cartao">
           <div class="cabeca"><h2>Seu banco de questões</h2></div>
@@ -143,6 +158,23 @@
       </div>
 
       <div id="q-fim" class="cartao" hidden></div>
+
+      <div id="q-simulado" class="cartao" hidden>
+        <div class="cabeca">
+          <span class="sutil" id="sim-posicao"></span>
+          <span class="relogio-sim" id="sim-relogio">00:00</span>
+        </div>
+        <div class="mapa-sim" id="sim-mapa"></div>
+        <div class="q-meta" id="sim-meta"></div>
+        <div class="q-enunciado" id="sim-enunciado"></div>
+        <div class="q-alternativas" id="sim-alternativas"></div>
+        <div class="botoes">
+          <button id="sim-desistir" class="texto">Desistir</button>
+          <button id="sim-anterior" class="secundario">Anterior</button>
+          <button id="sim-seguinte" class="secundario">Próxima</button>
+          <button id="sim-entregar" class="primario">Entregar</button>
+        </div>
+      </div>
     </section>
 
     <section id="tela-analise" class="tela" hidden>

@@ -38,7 +38,7 @@ if (comando === 'importar') {
     ['total', 'min', 'max', 'passo'].filter((k) => values[k]).map((k) => [k, Number(values[k])]),
   );
   const { blocos, opcoes: o } = gerarCiclo(db, planoId, opcoes);
-  const pesos = new Map(blocos.map((b) => [b.materia.nome, b.materia.peso]));
+  const pesos = new Map(blocos.filter((b) => b.materia).map((b) => [b.materia.nome, b.materia.peso]));
   console.log(`Pesos (${horas(o.total)} por volta do ciclo):`);
   for (const [nome, peso] of pesos) console.log(`  ${String(peso).padStart(3)}%  ${nome}`);
   const voltas = [...new Set(blocos.map((b) => b.volta))];
@@ -47,6 +47,10 @@ if (comando === 'importar') {
     const soma = daVolta.reduce((a, b) => a + b.duracao, 0);
     console.log(`\nVolta ${v} de ${voltas.length} (${horas(soma)}; pedido ${horas(o.total)}):`);
     for (const b of daVolta) {
+      if (!b.materia) {
+        console.log(`  ${String(b.posicao).padStart(2)}. ${String(b.duracao).padStart(3)} min  Questões misturadas (todas as matérias)`);
+        continue;
+      }
       const t = topicoSugerido(db, b.materia.id);
       console.log(`  ${String(b.posicao).padStart(2)}. ${String(b.duracao).padStart(3)} min  ${b.materia.nome}${t ? `  >  ${t.nome}` : ''}`);
     }

@@ -1,7 +1,7 @@
 {
   "name": "app-de-estudos",
   "productName": "App De Estudos",
-  "version": "1.0.5",
+  "version": "1.1.0",
   "private": true,
   "description": "Planejamento e registro de estudo para concursos e provas, com ponte MCP para o Claude",
   "type": "module",

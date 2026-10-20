@@ -4,9 +4,11 @@ import atualizador from 'electron-updater';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { abrirBanco, CAMINHO_PADRAO, copiaDeAbertura } from './db.js';
+import { abrirBanco, CAMINHO_PADRAO, copiaDeAbertura, copiarBanco } from './db.js';
 import { importarEdital } from './edital.js';
-import { gerarCiclo } from './ciclo.js';
+import { gerarCiclo, opcoesDoCiclo, sincronizarFase } from './ciclo.js';
+import * as fases from './fases.js';
+import * as simulado from './simulado.js';
 import * as servico from './servico.js';
 import * as questoes from './questoes.js';
 import { analisarQuestoes } from './analise.js';
@@ -21,13 +23,28 @@ questoes.prepararQuestoes(db);
 materiais.prepararMateriais(db);
 if (process.env.ESTUDOS_CAPTURA) app.disableHardwareAcceleration();
 
+// Virada de fase: refaz o ciclo uma vez quando a fase ativa muda (com cópia do banco antes).
+const emDia = (planoId) => sincronizarFase(db, planoId, { copiar: (motivo) => copiarBanco(db, CAMINHO, motivo) });
+
 // Tudo que a janela pode pedir. Pela tela só se apaga estudo (Histórico); o Claude apaga mais pelo MCP.
 const api = {
   versao: () => app.getVersion(),
   planos: () => servico.listarPlanos(db),
-  resumo: (planoId) => servico.resumo(db, planoId),
-  proximoBloco: (planoId) => servico.proximoBloco(db, planoId),
-  ciclo: (planoId) => servico.cicloDoPlano(db, planoId),
+  resumo: (planoId) => {
+    emDia(planoId);
+    return servico.resumo(db, planoId);
+  },
+  proximoBloco: (planoId) => {
+    emDia(planoId);
+    return servico.proximoBloco(db, planoId);
+  },
+  ciclo: (planoId) => {
+    emDia(planoId);
+    const ciclo = servico.cicloDoPlano(db, planoId);
+    const proxima = fases.proximaFase(db, planoId);
+    return ciclo && { ...ciclo, proximaFase: proxima && { nome: proxima.nome, inicio: proxima.inicio } };
+  },
+  fases: (planoId) => ({ lista: fases.listarFases(db, planoId), ativa: fases.faseAtiva(db, planoId)?.id ?? null }),
   materias: (planoId) => servico.materiasComTopicos(db, planoId),
   historico: (planoId) => servico.historico(db, planoId),
   revisoes: (planoId) => servico.revisoesDoDia(db, planoId),
@@ -40,9 +57,12 @@ const api = {
   concluirRevisao: (revisaoId, estado) => servico.concluirRevisao(db, revisaoId, estado),
   ajustarConhecimento: (planoId, materiaId, conhecimento) => {
     db.prepare('UPDATE materia SET conhecimento = ? WHERE id = ? AND plano_id = ?').run(conhecimento, materiaId, planoId);
-    return gerarCiclo(db, planoId, opcoesDoCiclo(planoId)).blocos.length;
+    return gerarCiclo(db, planoId, opcoesDoCiclo(db, planoId)).blocos.length;
   },
   questoes: (planoId, filtros) => questoes.listarQuestoes(db, planoId, filtros),
+  lotes: (planoId) => questoes.listarLotes(db, planoId),
+  montarSimulado: (planoId, pedido) => simulado.montarSimulado(db, planoId, pedido),
+  corrigirSimulado: (planoId, dados) => simulado.corrigirSimulado(db, planoId, dados),
   bancas: (planoId) => questoes.listarBancas(db, planoId),
   resumoQuestoes: (planoId) => questoes.resumoQuestoes(db, planoId),
   responderQuestao: (questaoId, escolhida, segundos) => questoes.responderQuestao(db, questaoId, escolhida, segundos),
@@ -90,11 +110,6 @@ const api = {
     return planoId;
   },
 };
-
-function opcoesDoCiclo(planoId) {
-  const c = db.prepare('SELECT * FROM ciclo WHERE plano_id = ?').get(planoId);
-  return c ? { total: c.tempo_total_min, min: c.bloco_min, max: c.bloco_max, passo: c.passo_min } : {};
-}
 
 // Só as telas do próprio programa (ui/index.html) podem falar com o banco.
 const TELA = pathToFileURL(join(aqui, '..', 'ui', 'index.html')).href;

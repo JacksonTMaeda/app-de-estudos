@@ -7,7 +7,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { abrirBanco, CAMINHO_PADRAO, copiarBanco as copiarBancoEm } from './db.js';
-import { calcularPesos, gerarCiclo, OPCOES_PADRAO } from './ciclo.js';
+import { calcularPesos, gerarCiclo, OPCOES_PADRAO, opcoesDoCiclo, sincronizarFase } from './ciclo.js';
+import * as fases from './fases.js';
+import { listarSimulados } from './simulado.js';
 import { importarEdital } from './edital.js';
 import * as servico from './servico.js';
 import * as questoes from './questoes.js';
@@ -31,6 +33,42 @@ function banco() {
 }
 
 const copiarBanco = (motivo) => copiarBancoEm(banco(), CAMINHO, motivo);
+
+// Virada de fase: o servidor MCP também refaz o ciclo quando a fase muda, porque a pessoa pode usar só o Claude.
+const emDia = (plano) => sincronizarFase(banco(), plano.id, { copiar: copiarBanco });
+const comVirada = (virada, resposta) => (virada ? { ...resposta, virada_de_fase: virada } : resposta);
+
+const diasEntre = (de, ate) => {
+  const [a1, m1, d1] = de.split('-').map(Number);
+  const [a2, m2, d2] = ate.split('-').map(Number);
+  return Math.round((Date.UTC(a2, m2 - 1, d2) - Date.UTC(a1, m1 - 1, d1)) / 86400000);
+};
+
+// Pesos do ciclo como o ciclo atual os calcula: com fase ativa, peso manual e matérias fora (peso 0).
+function pesosDoCiclo(planoId, materias) {
+  const fase = fases.faseAtiva(banco(), planoId);
+  if (!fase) return new Map(calcularPesos(materias).map((m) => [m.id, m.peso]));
+  const config = new Map(fase.materias.map((c) => [c.materia_id, c]));
+  const dentro = materias.filter((m) => !config.get(m.id)?.fora).map((m) => ({ ...m, pesoManual: config.get(m.id)?.peso ?? undefined }));
+  const pesos = new Map(materias.map((m) => [m.id, 0]));
+  for (const m of calcularPesos(dentro)) pesos.set(m.id, m.peso);
+  return pesos;
+}
+
+function faseParaResposta(f) {
+  return {
+    nome: f.nome,
+    inicio: f.inicio,
+    fim: f.fim,
+    minutos_por_volta: f.minutos_por_volta,
+    teto_semanal_min: f.teto_semanal_min,
+    questoes_misturadas_min: f.questoes_mistas_min,
+    anotacao: f.anotacao,
+    materias: f.materias?.map((m) => ({ materia: m.materia, peso: m.peso, tipo: m.tipo, fora: m.fora, grupo_foco: m.grupo_foco })),
+  };
+}
+
+const NOME_MISTO = 'Questões misturadas (todas as matérias)';
 
 const normal = (t) => String(t).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 
@@ -77,10 +115,14 @@ const FERRAMENTAS = {
     inputSchema: { type: 'object', properties: { ...PLANO } },
     rodar({ plano_id }) {
       const plano = escolherPlano(plano_id);
+      const virada = emDia(plano);
       const materias = servico.materiasComTopicos(banco(), plano.id);
-      const pesos = new Map(calcularPesos(materias).map((m) => [m.id, m.peso]));
+      const pesos = pesosDoCiclo(plano.id, materias);
       const ciclo = servico.cicloDoPlano(banco(), plano.id);
-      return {
+      const ativa = fases.faseAtiva(banco(), plano.id);
+      const proxima = fases.proximaFase(banco(), plano.id);
+      const semana = fases.semanaDoPlano(banco(), plano.id);
+      return comVirada(virada, {
         plano,
         planos: servico.listarPlanos(banco()),
         ciclo: ciclo && {
@@ -98,32 +140,43 @@ const FERRAMENTAS = {
           assuntos: `${m.topicos.filter((t) => t.concluido).length} de ${m.topicos.length} concluídos`,
           minutos_estudados: m.minutos,
           questoes: { acertos: m.acertos, erros: m.erros },
+          meta_acerto_pct: m.meta_acerto,
         })),
-      };
+        fase_ativa: ativa && { nome: ativa.nome, inicio: ativa.inicio, fim: ativa.fim, dias_ate_o_fim: diasEntre(hoje(), ativa.fim) },
+        proxima_fase: proxima && { nome: proxima.nome, comeca_em: proxima.inicio, dias_ate_a_virada: diasEntre(hoje(), proxima.inicio) },
+        semana: { modo: semana.modo, teto_min: semana.teto },
+        lotes_reservados: questoes.listarLotes(banco(), plano.id).filter((l) => l.reservado).map((l) => ({ lote: l.lote, questoes: l.questoes, libera_em: l.libera_em })),
+      });
     },
   },
 
   proximo_estudo: {
-    description: 'O que estudar agora pelo ciclo: o próximo bloco (matéria, minutos, assunto sugerido) e os 3 seguintes.',
+    description: 'O que estudar agora pelo ciclo: o próximo bloco (matéria, minutos, assunto sugerido, tipo do bloco e fase) e os 3 seguintes.',
     inputSchema: { type: 'object', properties: { ...PLANO } },
     rodar({ plano_id }) {
       const plano = escolherPlano(plano_id);
+      const virada = emDia(plano);
       const proximo = servico.proximoBloco(banco(), plano.id, { reiniciar: false });
-      if (!proximo) return { plano: plano.nome, proximo: null, aviso: 'Plano sem ciclo montado.' };
+      if (!proximo) return comVirada(virada, { plano: plano.nome, proximo: null, aviso: 'Plano sem ciclo montado.' });
       const ciclo = servico.cicloDoPlano(banco(), plano.id);
       const i = ciclo.blocos.findIndex((b) => b.id === proximo.id);
       const seguintes = [1, 2, 3].map((k) => ciclo.blocos[(i + k) % ciclo.blocos.length]);
-      return {
+      return comVirada(virada, {
         plano: plano.nome,
         proximo: {
-          materia: proximo.materia,
+          materia: proximo.materia ?? NOME_MISTO,
           minutos: proximo.duracao_min,
           volta: proximo.volta,
-          assunto_sugerido: proximo.topico?.nome ?? 'todos os assuntos concluídos',
+          assunto_sugerido: proximo.misto
+            ? 'questões de todas as matérias, embaralhadas, sem os lotes reservados'
+            : proximo.topico?.nome ?? 'todos os assuntos concluídos',
+          tipo: proximo.tipo,
+          grupo_de_foco: proximo.grupo_foco,
         },
+        fase: proximo.fase,
         progresso_do_ciclo: `${proximo.progresso.feitos} de ${proximo.progresso.total} blocos feitos`,
-        depois: seguintes.map((b) => ({ materia: b.materia, minutos: b.duracao_min })),
-      };
+        depois: seguintes.map((b) => ({ materia: b.materia ?? NOME_MISTO, minutos: b.duracao_min, tipo: b.tipo })),
+      });
     },
   },
 
@@ -252,7 +305,7 @@ const sessaoDoPlano = (planoId, id) => {
 Object.assign(FERRAMENTAS, {
   registrar_estudo: {
     description:
-      'Lança um estudo no app (aparece no histórico marcado como feito pelo Claude e agenda as revisões). Com conta_no_ciclo, marca como feito o próximo bloco do ciclo se for da mesma matéria.',
+      'Lança um estudo no app (aparece no histórico marcado como feito pelo Claude e agenda as revisões). Com conta_no_ciclo, marca como feito o próximo bloco do ciclo se for da mesma matéria (ou, se o próximo for o bloco de questões misturadas, se o estudo for do tipo questoes).',
     inputSchema: {
       type: 'object',
       properties: { ...PLANO, ...ESTUDO, concluiu_assunto: { type: 'boolean' }, conta_no_ciclo: { type: 'boolean' } },
@@ -263,8 +316,10 @@ Object.assign(FERRAMENTAS, {
       const plano = escolherPlano(args.plano_id);
       const dados = dadosDoEstudo(plano.id, args);
       dados.topico_concluido = !!args.concluiu_assunto;
+      if (args.conta_no_ciclo) emDia(plano);
       const proximo = args.conta_no_ciclo ? servico.proximoBloco(banco(), plano.id) : null;
-      if (proximo && proximo.materia_id === dados.materia_id) dados.bloco_id = proximo.id;
+      const bate = proximo && (proximo.misto ? dados.tipo === 'questoes' : proximo.materia_id === dados.materia_id);
+      if (bate) dados.bloco_id = proximo.id;
       const id = servico.registrarSessao(banco(), plano.id, dados, 'claude');
       return { registrado: servico.obterSessao(banco(), id), contou_no_ciclo: !!dados.bloco_id };
     },
@@ -336,9 +391,7 @@ Object.assign(FERRAMENTAS, {
       const m = materiaPorNome(plano.id, args.materia);
       const copia = copiarBanco('antes de refazer ciclo');
       banco().prepare('UPDATE materia SET conhecimento = ? WHERE id = ?').run(NIVEIS[args.nivel], m.id);
-      const c = banco().prepare('SELECT * FROM ciclo WHERE plano_id = ?').get(plano.id);
-      const opcoes = c ? { total: c.tempo_total_min, min: c.bloco_min, max: c.bloco_max, passo: c.passo_min } : {};
-      const { blocos } = gerarCiclo(banco(), plano.id, opcoes);
+      const { blocos } = gerarCiclo(banco(), plano.id, opcoesDoCiclo(banco(), plano.id));
       return { materia: m.nome, nivel: args.nivel, blocos_no_ciclo: blocos.length, copia_do_banco: copia };
     },
   },
@@ -359,8 +412,7 @@ Object.assign(FERRAMENTAS, {
     apaga: true,
     rodar(args) {
       const plano = escolherPlano(args.plano_id);
-      const c = banco().prepare('SELECT * FROM ciclo WHERE plano_id = ?').get(plano.id);
-      const atual = c ? { total: c.tempo_total_min, min: c.bloco_min, max: c.bloco_max, passo: c.passo_min } : OPCOES_PADRAO;
+      const atual = { ...OPCOES_PADRAO, ...opcoesDoCiclo(banco(), plano.id) };
       const opcoes = {
         total: args.minutos_por_volta ?? atual.total,
         min: args.bloco_min ?? atual.min,
@@ -368,12 +420,16 @@ Object.assign(FERRAMENTAS, {
         passo: args.passo ?? atual.passo,
       };
       const copia = copiarBanco('antes de refazer ciclo');
-      const { blocos } = gerarCiclo(banco(), plano.id, opcoes);
+      const { blocos, fase, opcoes: usadas } = gerarCiclo(banco(), plano.id, opcoes);
       const voltas = [...new Set(blocos.map((b) => b.volta))].map((v) => ({
         volta: v,
         minutos: blocos.filter((b) => b.volta === v).reduce((a, b) => a + b.duracao, 0),
       }));
-      return { opcoes, blocos: blocos.length, voltas, copia_do_banco: copia };
+      const resposta = { opcoes, blocos: blocos.length, voltas, copia_do_banco: copia };
+      if (fase && usadas.total !== opcoes.total) {
+        resposta.aviso = `A fase "${fase}" define ${usadas.total} min por volta e vale até acabar; os ${opcoes.total} min ficam guardados como o tempo do plano para depois dela.`;
+      }
+      return resposta;
     },
   },
 
@@ -572,8 +628,211 @@ Object.assign(FERRAMENTAS, {
   },
 });
 
+// ---------- fases, lotes, metas e preferências (1.1) ----------
+const MATERIA_DA_FASE = {
+  type: 'object',
+  properties: {
+    materia: { type: 'string', description: 'Nome ou parte do nome da matéria' },
+    peso: { type: 'number', exclusiveMinimum: 0, description: 'Peso manual (ex.: 9 e 1 dão 90% e 10%). Se uma matéria ativa tiver peso, todas precisam ter.' },
+    tipo: { type: 'string', enum: fases.TIPOS_BLOCO, description: 'Tipo dos blocos dessa matéria na fase (padrão teoria)' },
+    fora: { type: 'boolean', description: 'true tira a matéria do ciclo durante a fase' },
+    grupo_foco: { type: 'string', description: 'Grupo de assuntos em foco: o prefixo do nome antes de " / " (ex.: "Cirurgia pediátrica")' },
+  },
+  required: ['materia'],
+};
+
+// Fase mudou: se é a do ciclo, refaz (com cópia); senão, confere se a fase ativa mudou.
+function refazerSeFor(plano, faseId) {
+  const ciclo = banco().prepare('SELECT fase_id FROM ciclo WHERE plano_id = ?').get(plano.id);
+  if (ciclo && ciclo.fase_id === faseId) {
+    const copia = copiarBanco('antes de refazer ciclo');
+    gerarCiclo(banco(), plano.id, opcoesDoCiclo(banco(), plano.id));
+    return { ciclo_refeito: true, copia_do_banco: copia };
+  }
+  const virada = emDia(plano);
+  return { ciclo_refeito: !!virada && !virada.erro, ...(virada ? { virada_de_fase: virada } : {}) };
+}
+
+Object.assign(FERRAMENTAS, {
+  ver_fases: {
+    description: 'As fases com data do plano, com a ativa marcada e a configuração de cada matéria (peso manual, tipo do bloco, fora da fase, grupo de foco).',
+    inputSchema: { type: 'object', properties: { ...PLANO } },
+    rodar({ plano_id }) {
+      const plano = escolherPlano(plano_id);
+      const virada = emDia(plano);
+      const ativa = fases.faseAtiva(banco(), plano.id);
+      const lista = fases.listarFases(banco(), plano.id);
+      return comVirada(virada, {
+        plano: plano.nome,
+        hoje: hoje(),
+        fases: lista.map((f) => ({ ...faseParaResposta(f), ativa: f.id === ativa?.id })),
+        aviso: lista.length ? undefined : 'Plano sem fases: o ciclo segue o modelo normal do Estudei.',
+      });
+    },
+  },
+
+  definir_fase: {
+    description:
+      'Cria ou atualiza uma fase pelo nome: período, minutos por volta, teto semanal, minutos de questões misturadas por volta e a configuração das matérias. ' +
+      'Campo não enviado mantém o valor anterior; "materias", quando enviada, substitui a configuração inteira (matéria fora da lista volta ao padrão). ' +
+      'Fases do mesmo plano não podem se sobrepor. Se a fase é a do ciclo atual, o ciclo é refeito (com cópia do banco antes).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...PLANO,
+        nome: { type: 'string' },
+        inicio: DATA('Primeiro dia da fase'),
+        fim: DATA('Último dia da fase, inclusive'),
+        minutos_por_volta: { type: 'integer', minimum: 60, description: 'Minutos de conteúdo por volta (sem ele, vale o do plano)' },
+        teto_semanal_min: { type: 'integer', minimum: 1, description: 'Teto de estudo da semana, em minutos' },
+        questoes_misturadas_min: { type: 'integer', minimum: 1, description: 'Minutos de um bloco de questões de todas as matérias no fim de cada volta' },
+        anotacao: { type: 'string' },
+        materias: { type: 'array', items: MATERIA_DA_FASE },
+      },
+      required: ['nome'],
+    },
+    escreve: true,
+    rodar(args) {
+      const plano = escolherPlano(args.plano_id);
+      const dados = {
+        nome: args.nome,
+        inicio: args.inicio,
+        fim: args.fim,
+        minutos_por_volta: args.minutos_por_volta,
+        teto_semanal_min: args.teto_semanal_min,
+        questoes_mistas_min: args.questoes_misturadas_min,
+        anotacao: args.anotacao,
+      };
+      if (args.materias !== undefined) {
+        dados.materias = args.materias.map((m) => ({ ...m, materia_id: materiaPorNome(plano.id, m.materia).id }));
+      }
+      const fase = fases.definirFase(banco(), plano.id, dados);
+      return { fase: faseParaResposta(fase), ...refazerSeFor(plano, fase.id) };
+    },
+  },
+
+  apagar_fase: {
+    description: 'Apaga uma fase pelo nome. Se era a fase do ciclo, o ciclo é refeito sem ela. Guarda uma cópia do banco antes.',
+    inputSchema: { type: 'object', properties: { ...PLANO, nome: { type: 'string' } }, required: ['nome'] },
+    escreve: true,
+    apaga: true,
+    rodar({ plano_id, nome }) {
+      const plano = escolherPlano(plano_id);
+      const copia = copiarBanco('antes de apagar fase');
+      const fase = fases.apagarFase(banco(), plano.id, nome);
+      const virada = sincronizarFase(banco(), plano.id);
+      return { apagada: fase.nome, copia_do_banco: copia, ciclo_refeito: !!virada && !virada.erro };
+    },
+  },
+
+  lotes_de_questoes: {
+    description: 'Os lotes do banco de questões (o nome que agrupa as questões, como "Prova UEL 2025"), com quantas questões e se estão reservados.',
+    inputSchema: { type: 'object', properties: { ...PLANO } },
+    rodar({ plano_id }) {
+      const plano = escolherPlano(plano_id);
+      return { plano: plano.nome, lotes: questoes.listarLotes(banco(), plano.id) };
+    },
+  },
+
+  reservar_lote: {
+    description:
+      'Reserva um lote de questões (fica fora das rodadas comuns e do bloco misturado, e só aparece quando pedido, como num simulado) ou libera. ' +
+      'Com libera_em, volta ao normal sozinho nessa data.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...PLANO,
+        lote: { type: 'string', description: 'Nome do lote (veja lotes_de_questoes)' },
+        reservado: { type: 'boolean', description: 'false libera agora (padrão true)' },
+        libera_em: DATA('Dia em que o lote volta ao normal (opcional)'),
+      },
+      required: ['lote'],
+    },
+    escreve: true,
+    rodar(args) {
+      const plano = escolherPlano(args.plano_id);
+      return questoes.reservarLote(banco(), plano.id, args.lote, { reservado: args.reservado ?? true, liberaEm: args.libera_em });
+    },
+  },
+
+  definir_meta_acerto: {
+    description: 'Grava a meta de acerto em questões de uma matéria (percentual), ou limpa sem meta_pct. Aparece no Edital, na Análise e em ver_plano.',
+    inputSchema: {
+      type: 'object',
+      properties: { ...PLANO, materia: ESTUDO.materia, meta_pct: { type: 'number', minimum: 1, maximum: 100 } },
+      required: ['materia'],
+    },
+    escreve: true,
+    rodar(args) {
+      const plano = escolherPlano(args.plano_id);
+      const m = materiaPorNome(plano.id, args.materia);
+      banco().prepare('UPDATE materia SET meta_acerto = ? WHERE id = ?').run(args.meta_pct ?? null, m.id);
+      return { materia: m.nome, meta_acerto_pct: args.meta_pct ?? null };
+    },
+  },
+
+  ajustar_preferencias: {
+    description:
+      'Ajusta preferências sem abrir o banco: intervalos da revisão espaçada (dias, valem para todos os planos), minutos para o dia contar na constância, ' +
+      'modo da semana do plano ("meta": o tempo por volta é a meta; "teto": é limite e a tela não mostra falta como atraso) e o teto semanal do plano em minutos ' +
+      '(0 limpa; o teto da fase ativa vale sobre este). Só os campos enviados mudam.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...PLANO,
+        intervalos_revisao: { type: 'array', items: { type: 'integer', minimum: 1 }, minItems: 1, description: 'Ex.: [1, 7, 30]' },
+        minutos_constancia: { type: 'integer', minimum: 1 },
+        modo_semana: { type: 'string', enum: ['meta', 'teto'] },
+        teto_semanal_min: { type: 'integer', minimum: 0 },
+      },
+    },
+    escreve: true,
+    rodar(args) {
+      const plano = escolherPlano(args.plano_id);
+      const gravar = banco().prepare('INSERT INTO preferencia (chave, valor) VALUES (?, ?) ON CONFLICT (chave) DO UPDATE SET valor = excluded.valor');
+      if (args.intervalos_revisao) gravar.run('intervalos_revisao', JSON.stringify([...new Set(args.intervalos_revisao.map(Math.round))].sort((a, b) => a - b)));
+      if (args.minutos_constancia) gravar.run('minutos_constancia', JSON.stringify(Math.round(args.minutos_constancia)));
+      if (args.modo_semana) banco().prepare('UPDATE plano SET modo_semana = ? WHERE id = ?').run(args.modo_semana, plano.id);
+      if (args.teto_semanal_min !== undefined) banco().prepare('UPDATE plano SET teto_semanal_min = ? WHERE id = ?').run(args.teto_semanal_min || null, plano.id);
+      const pref = (chave) => JSON.parse(banco().prepare('SELECT valor FROM preferencia WHERE chave = ?').get(chave).valor);
+      const p = banco().prepare('SELECT modo_semana, teto_semanal_min FROM plano WHERE id = ?').get(plano.id);
+      return {
+        intervalos_revisao: pref('intervalos_revisao'),
+        minutos_constancia: pref('minutos_constancia'),
+        modo_semana: p.modo_semana,
+        teto_semanal_min: p.teto_semanal_min,
+        teto_valendo_agora: fases.semanaDoPlano(banco(), plano.id).teto,
+        aviso: args.intervalos_revisao ? 'Os intervalos novos valem para os estudos registrados daqui em diante.' : undefined,
+      };
+    },
+  },
+
+  resultado_simulados: {
+    description: 'Os simulados feitos na tela de Questões do app: data, tempo, acerto geral e por matéria.',
+    inputSchema: { type: 'object', properties: { ...PLANO, limite: { type: 'integer', minimum: 1, maximum: 100 } } },
+    rodar({ plano_id, limite }) {
+      const plano = escolherPlano(plano_id);
+      return {
+        plano: plano.nome,
+        simulados: listarSimulados(banco(), plano.id, limite || 10).map((s) => ({
+          quando: s.feito_em,
+          minutos: s.minutos,
+          questoes: s.questoes,
+          acertos: s.acertos,
+          acerto_pct: Math.round((s.acertos / s.questoes) * 100),
+          lote: s.lote,
+          por_materia: s.por_materia.map((m) => ({ materia: m.materia, questoes: m.questoes, acertos: m.acertos, em_branco: m.em_branco })),
+        })),
+      };
+    },
+  },
+});
+
 const INSTRUCOES =
   'Dados do App De Estudos, o programa de estudo que roda neste PC (ciclo, registro de estudo, revisões, banco de questões e materiais em PDF). ' +
+  'Um plano pode ter fases com data (ver_fases, definir_fase): a fase ativa muda os pesos, o tipo dos blocos (teoria, revisão, questões), ' +
+  'as matérias do ciclo e o assunto sugerido; na virada de fase o ciclo é refeito sozinho. Plano sem fase segue o ciclo normal. ' +
+  'No modo teto o tempo da semana é limite, não obrigação: nunca apresente o que faltou como atraso. ' +
   'Use para responder sobre o progresso real, orientar o que estudar e lançar ou corrigir o que a pessoa contar na conversa. ' +
   'As ferramentas gravam e apagam de verdade no app; as que apagam ou refazem guardam uma cópia do banco antes. ' +
   'Datas em YYYY-MM-DD e horários em hora local.';

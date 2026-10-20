@@ -4,7 +4,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, basename, relative, sep } from 'node:path';
 import vm from 'node:vm';
-import { transacao } from './db.js';
+import { dataLocal, transacao } from './db.js';
 
 const ESQUEMA = `
 CREATE TABLE IF NOT EXISTS questao (
@@ -193,11 +193,29 @@ export function listarBancas(db, planoId) {
   return [...contagem].map(([banca, total]) => ({ banca, total })).sort((a, b) => b.total - a.total);
 }
 
+const temLotesReservados = (db) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lote_reservado'").get();
+
+// Lote reservado e ainda não liberado: fora das rodadas comuns e do bloco misturado.
+const RESERVADO = `EXISTS (SELECT 1 FROM lote_reservado l WHERE l.plano_id = q.plano_id AND l.origem = q.origem
+  AND (l.libera_em IS NULL OR l.libera_em > ?))`;
+
 // origem: 'todas', 'banca', 'autoral' ou o nome de uma banca (ex.: 'FGV').
-export function listarQuestoes(db, planoId, { materiaId = null, origem = 'todas', situacao = 'todas', ids = null, limite = 200 } = {}) {
+// lote: só as questões desse lote (campo origem), reservado ou não. Sem lote, os reservados ficam de fora,
+// a não ser com incluirReservados (simulado). aleatoria embaralha antes do limite.
+export function listarQuestoes(db, planoId, {
+  materiaId = null, origem = 'todas', situacao = 'todas', ids = null, limite = 200,
+  lote = null, incluirReservados = false, aleatoria = false, hoje = dataLocal(),
+} = {}) {
   prepararQuestoes(db);
   const filtros = ['q.plano_id = ?'];
   const args = [planoId];
+  if (lote) {
+    filtros.push('q.origem = ?');
+    args.push(lote);
+  } else if (!incluirReservados && !Array.isArray(ids) && temLotesReservados(db)) {
+    filtros.push(`NOT ${RESERVADO}`);
+    args.push(hoje);
+  }
   if (Array.isArray(ids)) {
     filtros.push(`q.id IN (${ids.map(() => '?').join(',') || 'NULL'})`);
     args.push(...ids.map(Number));
@@ -224,7 +242,7 @@ export function listarQuestoes(db, planoId, { materiaId = null, origem = 'todas'
               q.alternativas, q.correta, q.comentario, u.acertou ultima_acertou
        FROM questao q LEFT JOIN materia m ON m.id = q.materia_id LEFT JOIN ultima u ON u.questao_id = q.id
        WHERE ${filtros.join(' AND ')}
-       ORDER BY m.posicao, q.origem, q.numero LIMIT ?`,
+       ORDER BY ${aleatoria ? 'random()' : 'm.posicao, q.origem, q.numero'} LIMIT ?`,
     )
     .all(...args)
     .map((q) => ({ ...q, alternativas: JSON.parse(q.alternativas) }));
@@ -283,4 +301,44 @@ export function resumoQuestoes(db, planoId) {
        WHERE q.plano_id = ? GROUP BY q.materia_id ORDER BY m.posicao`,
     )
     .all(planoId);
+}
+
+// Lotes de questões do plano (o campo origem), com quantas questões e se estão reservados.
+export function listarLotes(db, planoId, hoje = dataLocal()) {
+  prepararQuestoes(db);
+  const reservas = temLotesReservados(db)
+    ? new Map(db.prepare('SELECT origem, libera_em FROM lote_reservado WHERE plano_id = ?').all(planoId).map((r) => [r.origem, r]))
+    : new Map();
+  return db
+    .prepare('SELECT origem lote, COUNT(*) questoes FROM questao WHERE plano_id = ? GROUP BY origem ORDER BY origem')
+    .all(planoId)
+    .map((l) => {
+      const r = reservas.get(l.lote);
+      return { ...l, reservado: !!r && (r.libera_em == null || r.libera_em > hoje), libera_em: r?.libera_em ?? null };
+    });
+}
+
+// Acha o lote pelo nome exato, pelo nome que o Claude deu (gravado como "claude/<nome>") ou sem diferença de maiúsculas.
+export function acharLote(db, planoId, nome) {
+  const lotes = listarLotes(db, planoId).map((l) => l.lote);
+  const alvo = String(nome).trim();
+  const achado = lotes.find((l) => l === alvo) ?? lotes.find((l) => l === `claude/${alvo}`)
+    ?? lotes.find((l) => l.toLowerCase() === alvo.toLowerCase() || l.toLowerCase() === `claude/${alvo}`.toLowerCase());
+  if (!achado) throw new Error(`Lote "${nome}" não encontrado. Lotes: ${lotes.join('; ') || 'nenhum'}.`);
+  return achado;
+}
+
+// Reserva (com data de liberação opcional, YYYY-MM-DD) ou libera um lote.
+export function reservarLote(db, planoId, lote, { reservado = true, liberaEm = null } = {}) {
+  const origem = acharLote(db, planoId, lote);
+  if (liberaEm && !/^\d{4}-\d{2}-\d{2}$/.test(liberaEm)) throw new Error('Data de liberação em YYYY-MM-DD.');
+  if (reservado) {
+    db.prepare(
+      `INSERT INTO lote_reservado (plano_id, origem, libera_em) VALUES (?, ?, ?)
+       ON CONFLICT (plano_id, origem) DO UPDATE SET libera_em = excluded.libera_em`,
+    ).run(planoId, origem, liberaEm || null);
+  } else {
+    db.prepare('DELETE FROM lote_reservado WHERE plano_id = ? AND origem = ?').run(planoId, origem);
+  }
+  return listarLotes(db, planoId).find((l) => l.lote === origem);
 }

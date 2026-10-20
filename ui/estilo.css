@@ -259,3 +259,38 @@ dialog input:not([type=checkbox]), dialog select, dialog textarea {
 .textLayer br::selection { background: transparent; }
 .textLayer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: 0; cursor: default; user-select: none; }
 .materiais li > button:last-child { min-width: 96px; }
+
+/* 1.1: fases, tipo do bloco, teto da semana, metas e simulado */
+.faixa-fase { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; padding: 10px 12px; margin-bottom: 10px; border-radius: 8px; background: var(--primaria-clara); }
+.faixa-fase strong { color: var(--primaria); }
+.selo { font-size: 11px; padding: 1px 7px; border-radius: 9px; background: var(--vazio); color: var(--sutil); white-space: nowrap; }
+.selo.revisao { background: color-mix(in srgb, var(--medio) 22%, transparent); color: var(--texto); }
+.selo.questoes { background: color-mix(in srgb, var(--bom) 18%, transparent); color: var(--texto); }
+.faixa.misto, .bloco .bola.misto { background: conic-gradient(#4f5bd5, #e0748c, #2f9e6a, #d9a21b, #3aa0c8, #4f5bd5); }
+.barra.neutra > div { background: var(--sutil); }
+.barra.passou > div { background: var(--medio); }
+.fase { padding: 10px 0; border-top: 1px solid var(--borda); }
+.fase:first-child { border-top: 0; }
+.fase .cabeca { margin-bottom: 4px; }
+.fase.ativa h3 { color: var(--primaria); }
+.fase h3 { margin: 0; font-size: 15px; }
+.fase .conf { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.meta-acerto { font-size: 12px; color: var(--sutil); }
+.meta-acerto.batida { color: var(--bom); }
+.trilho { position: relative; }
+.trilho .marca-meta { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--texto); opacity: 0.55; }
+.filtros input:not([type=checkbox]) { padding: 7px 8px; border-radius: 8px; border: 1px solid var(--borda); background: var(--fundo); width: 120px; font-weight: 400; color: var(--texto); }
+#q-simulado { max-width: 860px; }
+.relogio-sim { font-size: 20px; font-variant-numeric: tabular-nums; font-weight: 600; }
+.relogio-sim.acabando { color: var(--ruim); }
+.mapa-sim { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 14px; }
+.mapa-sim button { width: 30px; height: 26px; font-size: 11px; border-radius: 6px; border: 1px solid var(--borda); background: var(--fundo); color: var(--sutil); cursor: pointer; padding: 0; }
+.mapa-sim button.respondida { background: var(--primaria-clara); color: var(--primaria); border-color: transparent; }
+.mapa-sim button.aqui { outline: 2px solid var(--primaria); }
+.revisao-sim details { border-top: 1px solid var(--borda); padding: 8px 0; }
+.revisao-sim summary { cursor: pointer; display: flex; gap: 10px; align-items: center; }
+.revisao-sim .ok { color: var(--bom); font-weight: 700; }
+.revisao-sim .nao { color: var(--ruim); font-weight: 700; }
+.revisao-sim .branco { color: var(--sutil); font-weight: 700; }
+.barras.com-meta .linha-barra { grid-template-columns: minmax(0, 1.4fr) minmax(0, 2fr) 150px; }
+.faixa-fase[hidden] { display: none; }

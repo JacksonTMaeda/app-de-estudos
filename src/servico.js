@@ -1,15 +1,13 @@
 // Regras de uso do dia a dia: o que estudar agora, registrar estudo, revisões e números do painel.
 // Usado pela plataforma (servidor.js) e, na próxima etapa, pelo servidor MCP.
-import { transacao } from './db.js';
+import { dataLocal, transacao } from './db.js';
 import { topicoSugerido } from './ciclo.js';
+import { faseDoCiclo, semanaDoPlano } from './fases.js';
+
+export { dataLocal };
 
 const TIPOS = ['teoria', 'questoes', 'revisao'];
 
-// Datas locais em texto (YYYY-MM-DD), para agrupar por dia no fuso do PC.
-export function dataLocal(d = new Date()) {
-  const z = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`;
-}
 export function dataHoraLocal(d = new Date()) {
   const z = (n) => String(n).padStart(2, '0');
   return `${dataLocal(d)}T${z(d.getHours())}:${z(d.getMinutes())}`;
@@ -35,13 +33,22 @@ export function listarPlanos(db) {
 export function cicloDoPlano(db, planoId) {
   const ciclo = db.prepare('SELECT * FROM ciclo WHERE plano_id = ?').get(planoId);
   if (!ciclo) return null;
+  // b.* porque banco ainda não migrado (só leitura) não tem a coluna tipo. Bloco sem matéria é o de questões misturadas.
   const blocos = db
     .prepare(
-      `SELECT b.id, b.volta, b.posicao, b.duracao_min, b.feito, m.id materia_id, m.nome materia, m.cor
-       FROM bloco b JOIN materia m ON m.id = b.materia_id WHERE b.ciclo_id = ? ORDER BY b.posicao`,
+      `SELECT b.*, m.nome materia, m.cor
+       FROM bloco b LEFT JOIN materia m ON m.id = b.materia_id WHERE b.ciclo_id = ? ORDER BY b.posicao`,
     )
-    .all(ciclo.id);
-  return { ...ciclo, blocos };
+    .all(ciclo.id)
+    .map(({ ciclo_id, ...b }) => ({ ...b, tipo: b.tipo ?? 'teoria', misto: b.materia_id == null }));
+  const fase = faseDoCiclo(db, ciclo.fase_id);
+  return { ...ciclo, blocos, fase: fase && { id: fase.id, nome: fase.nome, inicio: fase.inicio, fim: fase.fim } };
+}
+
+// Grupo de foco da matéria na fase de que o ciclo saiu.
+function grupoFocoDe(db, faseId, materiaId) {
+  if (faseId == null || materiaId == null) return null;
+  return db.prepare('SELECT grupo_foco FROM fase_materia WHERE fase_id = ? AND materia_id = ?').get(faseId, materiaId)?.grupo_foco ?? null;
 }
 
 // Primeiro bloco ainda não feito. Quando a fila acaba, ela recomeça do início.
@@ -56,9 +63,12 @@ export function proximoBloco(db, planoId, { reiniciar = true } = {}) {
     bloco = { ...ciclo.blocos[0], feito: 0 };
     feitos = 0;
   }
+  const grupoFoco = grupoFocoDe(db, ciclo.fase_id, bloco.materia_id);
   return {
     ...bloco,
-    topico: topicoSugerido(db, bloco.materia_id) ?? null,
+    topico: bloco.materia_id == null ? null : topicoSugerido(db, bloco.materia_id, grupoFoco) ?? null,
+    grupo_foco: grupoFoco,
+    fase: ciclo.fase?.nome ?? null,
     progresso: { feitos, total: ciclo.blocos.length },
   };
 }
@@ -137,8 +147,9 @@ export function pularBloco(db, blocoId) {
 
 export function materiasComTopicos(db, planoId) {
   const materias = db
-    .prepare('SELECT id, nome, cor, conhecimento, importancia FROM materia WHERE plano_id = ? ORDER BY posicao')
-    .all(planoId);
+    .prepare('SELECT * FROM materia WHERE plano_id = ? ORDER BY posicao')
+    .all(planoId)
+    .map(({ plano_id, posicao, ...m }) => ({ ...m, meta_acerto: m.meta_acerto ?? null }));
   const topicos = db.prepare('SELECT id, numero, nome, concluido FROM topico WHERE materia_id = ? ORDER BY numero');
   const stats = db.prepare(
     `SELECT COALESCE(SUM(duracao_min), 0) minutos, COALESCE(SUM(acertos), 0) acertos, COALESCE(SUM(erros), 0) erros
@@ -271,7 +282,11 @@ export function resumo(db, planoId, hoje = dataLocal()) {
     return { dia, minutos: porDia.get(dia) || 0 };
   });
   const ciclo = db.prepare('SELECT tempo_total_min FROM ciclo WHERE plano_id = ?').get(planoId);
+  const { modo, teto } = semanaDoPlano(db, planoId, hoje);
   return {
+    // Modo teto: o tempo da semana é limite, não meta; a tela não mostra falta como atraso.
+    modoSemana: modo,
+    tetoSemanal: teto,
     hoje: minutos(hoje),
     semana: minutos(semana),
     total: db.prepare('SELECT COALESCE(SUM(duracao_min), 0) m FROM sessao WHERE plano_id = ?').get(planoId).m,
