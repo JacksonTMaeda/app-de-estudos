@@ -272,6 +272,7 @@ dialog input:not([type=checkbox]), dialog select, dialog textarea {
 
 .l-menu { position: fixed; z-index: 20; display: flex; flex-direction: column; gap: 8px; padding: 8px; min-width: 200px; max-width: 320px;
   background: var(--cartao); border: 1px solid var(--borda); border-radius: 10px; box-shadow: 0 6px 24px rgba(20, 30, 60, 0.18); }
+.l-menu[hidden] { display: none; } /* o display: flex acima venceria o hidden e deixaria a caixa vazia na tela */
 .l-menu .linha { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .l-menu textarea { width: 100%; min-height: 80px; resize: vertical; padding: 6px; border-radius: 6px; border: 1px solid var(--borda); background: var(--fundo); }
 .l-menu .apagar { color: var(--ruim); margin-left: auto; }
