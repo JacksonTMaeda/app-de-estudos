@@ -73,19 +73,36 @@ export function proximoBloco(db, planoId, { reiniciar = true } = {}) {
   };
 }
 
+// PDF e páginas do estudo: sem material não há páginas; página invertida é desvirada; o nome vem da lista.
+// Corrigindo um estudo cujo PDF já saiu da lista, o nome gravado nele vale.
+function leituraDoEstudo(db, planoId, materialId, de, ate, atual = null) {
+  materialId = Number(materialId) || null;
+  if (!materialId) return { material_id: null, material_nome: null, pagina_de: null, pagina_ate: null };
+  let mt = db.prepare('SELECT nome, plano_id FROM material WHERE id = ?').get(materialId);
+  if (!mt && atual?.material_id === materialId) mt = { nome: atual.material_nome, plano_id: planoId };
+  if (!mt || mt.plano_id !== planoId) throw new Error(`Material ${materialId} não existe nesse plano.`);
+  const pagina = (v) => (Number(v) >= 1 ? Math.floor(Number(v)) : null);
+  let [p1, p2] = [pagina(de), pagina(ate)];
+  if (p1 && p2 && p1 > p2) [p1, p2] = [p2, p1];
+  return { material_id: materialId, material_nome: mt.nome, pagina_de: p1 ?? p2, pagina_ate: p2 ?? p1 };
+}
+
 export function registrarSessao(db, planoId, dados, origem = 'app') {
   const tipo = TIPOS.includes(dados.tipo) ? dados.tipo : 'teoria';
   const inicio = dados.inicio || dataHoraLocal();
   const duracao = Math.max(0, Math.round(Number(dados.duracao_min) || 0));
   const acertos = Math.max(0, Number(dados.acertos) || 0);
   const erros = Math.max(0, Number(dados.erros) || 0);
+  const l = leituraDoEstudo(db, planoId, dados.material_id, dados.pagina_de, dados.pagina_ate);
   return transacao(db, () => {
     const { lastInsertRowid } = db
       .prepare(
-        `INSERT INTO sessao (plano_id, materia_id, topico_id, inicio, duracao_min, tipo, acertos, erros, anotacao, origem)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO sessao (plano_id, materia_id, topico_id, inicio, duracao_min, tipo, acertos, erros, anotacao, origem,
+                             material_id, material_nome, pagina_de, pagina_ate)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(planoId, dados.materia_id || null, dados.topico_id || null, inicio, duracao, tipo, acertos, erros, dados.anotacao || null, origem);
+      .run(planoId, dados.materia_id || null, dados.topico_id || null, inicio, duracao, tipo, acertos, erros, dados.anotacao || null, origem,
+        l.material_id, l.material_nome, l.pagina_de, l.pagina_ate);
     const sessaoId = Number(lastInsertRowid);
     agendarRevisoes(db, sessaoId, tipo, inicio);
     if (dados.bloco_id) db.prepare('UPDATE bloco SET feito = 1 WHERE id = ?').run(dados.bloco_id);
@@ -116,9 +133,12 @@ export function editarSessao(db, sessaoId, dados) {
   const tipo = TIPOS.includes(dados.tipo) ? dados.tipo : atual.tipo;
   const inicio = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dados.inicio ?? '') ? dados.inicio : atual.inicio;
   const numero = (v, antes) => (v === undefined || v === null || v === '' ? antes : Math.max(0, Math.round(Number(v)) || 0));
+  const manter = (campo) => (dados[campo] === undefined ? atual[campo] : dados[campo]);
+  const l = leituraDoEstudo(db, atual.plano_id, manter('material_id'), manter('pagina_de'), manter('pagina_ate'), atual);
   transacao(db, () => {
     db.prepare(
-      `UPDATE sessao SET materia_id = ?, topico_id = ?, inicio = ?, duracao_min = ?, tipo = ?, acertos = ?, erros = ?, anotacao = ?
+      `UPDATE sessao SET materia_id = ?, topico_id = ?, inicio = ?, duracao_min = ?, tipo = ?, acertos = ?, erros = ?, anotacao = ?,
+              material_id = ?, material_nome = ?, pagina_de = ?, pagina_ate = ?
        WHERE id = ?`,
     ).run(
       dados.materia_id === undefined ? atual.materia_id : dados.materia_id || null,
@@ -129,6 +149,7 @@ export function editarSessao(db, sessaoId, dados) {
       numero(dados.acertos, atual.acertos),
       numero(dados.erros, atual.erros),
       dados.anotacao === undefined ? atual.anotacao : dados.anotacao || null,
+      l.material_id, l.material_nome, l.pagina_de, l.pagina_ate,
       sessaoId,
     );
     if (inicio !== atual.inicio || tipo !== atual.tipo) agendarRevisoes(db, sessaoId, tipo, inicio);
@@ -175,6 +196,7 @@ export function historico(db, planoId, limite = 50) {
   return db
     .prepare(
       `SELECT s.id, s.inicio, s.duracao_min, s.tipo, s.acertos, s.erros, s.anotacao, s.origem,
+              s.material_id, s.material_nome AS material, s.pagina_de, s.pagina_ate,
               m.id materia_id, m.nome materia, m.cor, t.nome topico
        FROM sessao s LEFT JOIN materia m ON m.id = s.materia_id LEFT JOIN topico t ON t.id = s.topico_id
        WHERE s.plano_id = ? ORDER BY s.inicio DESC, s.id DESC LIMIT ?`,

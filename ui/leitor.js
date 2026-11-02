@@ -8,12 +8,13 @@ pdfjs.GlobalWorkerOptions.workerSrc = `${BASE}build/pdf.worker.min.mjs`;
 
 const $ = (sel) => document.querySelector(sel);
 const caixa = $('#l-paginas');
-const leitor = { material: null, doc: null, escala: 1, tamanho: null, pagina: 1, salvar: null, observador: null, guardar: null };
+const leitor = { material: null, doc: null, escala: 1, tamanho: null, pagina: 1, salvar: null, observador: null, guardar: null, aoVer: null };
 
 const escalaSalva = () => Number(localStorage.getItem('leitor_escala')) || null;
 
 // Abre o material na página onde parou. chamar é a ponte com o banco (window.estudos.chamar).
-export async function abrirLeitor(material, chamar) {
+// aoVerPagina(materialId, pagina) avisa cada página que passa pela tela (o cronômetro anota o trecho lido).
+export async function abrirLeitor(material, chamar, aoVerPagina = null) {
   await fecharLeitor();
   const guardar = (materialId, pagina, paginas) => chamar('guardarPagina', materialId, pagina, paginas);
   leitor.material = material;
@@ -36,13 +37,16 @@ export async function abrirLeitor(material, chamar) {
   $('#l-total').textContent = `de ${leitor.doc.numPages}`;
   $('#l-pagina').max = leitor.doc.numPages;
   await carregarMarcacoes(material.id, chamar);
+  leitor.aoVer = aoVerPagina;
   montarPaginas(Math.min(material.ultima_pagina || 1, leitor.doc.numPages));
+  leitor.aoVer?.(material.id, leitor.pagina);
   guardar(material.id, leitor.pagina, leitor.doc.numPages);
 }
 
 export async function fecharLeitor() {
   if (!leitor.doc) return;
   clearTimeout(leitor.salvar);
+  leitor.aoVer = null;
   if (document.fullscreenElement) document.exitFullscreen();
   limparMarcacoes();
   await leitor.guardar(leitor.material.id, leitor.pagina, leitor.doc.numPages);
@@ -121,6 +125,7 @@ function marcarPagina(n) {
   if (n === leitor.pagina && $('#l-pagina').value === String(n)) return;
   leitor.pagina = n;
   $('#l-pagina').value = n;
+  leitor.aoVer?.(leitor.material.id, n);
   clearTimeout(leitor.salvar);
   leitor.salvar = setTimeout(() => leitor.doc && leitor.guardar(leitor.material.id, n, leitor.doc.numPages), 800);
 }

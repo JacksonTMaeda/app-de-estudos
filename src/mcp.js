@@ -219,7 +219,7 @@ const FERRAMENTAS = {
   },
 
   historico_sessoes: {
-    description: 'Os últimos estudos registrados, com tempo, tipo, questões e a anotação de cada um.',
+    description: 'Os últimos estudos registrados, com tempo, tipo, questões, a anotação e o PDF e as páginas estudadas de cada um.',
     inputSchema: {
       type: 'object',
       properties: { ...PLANO, limite: { type: 'integer', minimum: 1, maximum: 200, description: 'Quantos (padrão 20)' } },
@@ -238,6 +238,7 @@ const FERRAMENTAS = {
           acertos: s.acertos,
           erros: s.erros,
           anotacao: s.anotacao,
+          pdf: s.material ? { material_id: s.material_id, nome: s.material, pagina_de: s.pagina_de, pagina_ate: s.pagina_ate } : null,
           registrado_por: s.origem,
         })),
       };
@@ -287,10 +288,16 @@ const ESTUDO = {
   erros: { type: 'integer', minimum: 0 },
   anotacao: { type: 'string' },
   quando: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}$', description: 'Data e hora local (YYYY-MM-DDTHH:MM). Sem ela, agora.' },
+  material_id: { type: 'integer', minimum: 0, description: 'PDF estudado (id da ferramenta materiais); 0 tira o PDF do estudo (opcional)' },
+  pagina_de: { type: 'integer', minimum: 1, description: 'Primeira página estudada do PDF' },
+  pagina_ate: { type: 'integer', minimum: 1, description: 'Última página estudada do PDF' },
 };
 
 function dadosDoEstudo(planoId, args) {
-  const dados = { tipo: args.tipo, duracao_min: args.minutos, acertos: args.acertos, erros: args.erros, anotacao: args.anotacao, inicio: args.quando };
+  const dados = {
+    tipo: args.tipo, duracao_min: args.minutos, acertos: args.acertos, erros: args.erros, anotacao: args.anotacao, inicio: args.quando,
+    material_id: args.material_id, pagina_de: args.pagina_de, pagina_ate: args.pagina_ate,
+  };
   if (args.materia !== undefined) {
     const m = materiaPorNome(planoId, args.materia);
     dados.materia_id = m.id;

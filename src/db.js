@@ -178,6 +178,9 @@ const COLUNAS_NOVAS = {
   ciclo: { fase_id: 'INTEGER', total_base_min: 'INTEGER' },
   materia: { meta_acerto: 'REAL' },
   plano: { modo_semana: "TEXT NOT NULL DEFAULT 'meta'", teto_semanal_min: 'INTEGER' },
+  // 1.3: o PDF e as páginas estudadas. O nome fica gravado junto porque o material sai da lista
+  // quando o arquivo é renomeado ou movido, e o estudo não pode perder o que foi lido.
+  sessao: { material_id: 'INTEGER', material_nome: 'TEXT', pagina_de: 'INTEGER', pagina_ate: 'INTEGER' },
 };
 
 export const colunasDe = (db, tabela) => new Set(db.prepare(`PRAGMA table_info(${tabela})`).all().map((c) => c.name));

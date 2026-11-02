@@ -21,7 +21,11 @@ const db = abrirBanco(CAMINHO);
 copiaDeAbertura(db, CAMINHO, app.getVersion());
 questoes.prepararQuestoes(db);
 materiais.prepararMateriais(db);
-if (process.env.ESTUDOS_CAPTURA) app.disableHardwareAcceleration();
+if (process.env.ESTUDOS_CAPTURA) {
+  app.disableHardwareAcceleration();
+  // A captura nunca mexe no localStorage do programa de verdade (cronômetro em andamento, zoom do leitor).
+  app.setPath('userData', join(app.getPath('temp'), 'app-de-estudos-captura'));
+}
 
 // Virada de fase: refaz o ciclo uma vez quando a fase ativa muda (com cópia do banco antes).
 const emDia = (planoId) => sincronizarFase(db, planoId, { copiar: (motivo) => copiarBanco(db, CAMINHO, motivo) });

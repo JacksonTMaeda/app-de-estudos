@@ -147,3 +147,24 @@ test('sessão do Claude fica marcada', () => {
   s.registrarSessao(db, planoId, { tipo: 'teoria', duracao_min: 20 }, 'claude');
   assert.equal(s.historico(db, planoId)[0].origem, 'claude');
 });
+
+test('estudo guarda o PDF e as páginas, desvira a ordem e mantém o nome se o PDF sair da lista', async () => {
+  const { prepararMateriais } = await import('../src/materiais.js');
+  const { db, planoId } = novoPlano();
+  prepararMateriais(db);
+  const materialId = Number(db.prepare("INSERT INTO material (plano_id, caminho, nome) VALUES (?, 'C:/x/aula 9.pdf', 'Aula 9')").run(planoId).lastInsertRowid);
+  const id = s.registrarSessao(db, planoId, { tipo: 'teoria', duracao_min: 30, material_id: materialId, pagina_de: 21, pagina_ate: 9 });
+  let r = s.obterSessao(db, id);
+  assert.deepEqual([r.material_id, r.material_nome, r.pagina_de, r.pagina_ate], [materialId, 'Aula 9', 9, 21]);
+  assert.equal(s.historico(db, planoId)[0].material, 'Aula 9');
+
+  // Arquivo renomeado: o material sai da lista, o estudo continua dizendo o que foi lido, e dá para corrigir as páginas.
+  db.prepare('DELETE FROM material WHERE id = ?').run(materialId);
+  r = s.editarSessao(db, id, { pagina_ate: 25 });
+  assert.deepEqual([r.material_nome, r.pagina_de, r.pagina_ate], ['Aula 9', 9, 25]);
+
+  // Sem PDF, as páginas saem junto.
+  r = s.editarSessao(db, id, { material_id: null });
+  assert.deepEqual([r.material_id, r.material_nome, r.pagina_de, r.pagina_ate], [null, null, null, null]);
+  assert.throws(() => s.registrarSessao(db, planoId, { tipo: 'teoria', material_id: 999 }), /não existe/);
+});

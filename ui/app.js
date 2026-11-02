@@ -15,7 +15,7 @@ const CONHECIMENTO = [
 const TIPO = { teoria: 'Teoria', questoes: 'Questões', revisao: 'Revisão' };
 const DIAS = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
 
-const estado = { planoId: null, tela: 'inicio', materias: [], cores: new Map(), proximo: null };
+const estado = { planoId: null, tela: 'inicio', materias: [], cores: new Map(), proximo: null, materiaAberta: null };
 
 const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const horas = (min) => (min >= 60 ? `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}` : `${min}min`);
@@ -37,7 +37,10 @@ const nomeMateria = (id) => estado.materias.find((m) => m.id === id)?.nome ?? 'S
 
 // ---------- navegação ----------
 document.querySelectorAll('nav button').forEach((b) =>
-  b.addEventListener('click', () => mostrar(b.dataset.tela)),
+  b.addEventListener('click', () => {
+    if (b.dataset.tela === 'materiais') estado.materiaAberta = null;
+    mostrar(b.dataset.tela);
+  }),
 );
 function mostrar(tela) {
   if (estado.tela === 'leitor' && tela !== 'leitor') fecharLeitor();
@@ -226,11 +229,18 @@ function segundosCorridos() {
   const ate = cronometro.pausadoEm || Date.now();
   return Math.floor((ate - cronometro.inicio - (cronometro.pausas || 0)) / 1000);
 }
+// O mesmo relógio aparece no Início e na barra do leitor, para o tempo ficar à vista enquanto lê o PDF.
 function desenharRelogio() {
   const s = segundosCorridos();
   const z = (n) => String(n).padStart(2, '0');
-  $('#relogio').textContent = `${z(Math.floor(s / 3600))}:${z(Math.floor((s % 3600) / 60))}:${z(s % 60)}`;
+  const texto = `${z(Math.floor(s / 3600))}:${z(Math.floor((s % 3600) / 60))}:${z(s % 60)}`;
+  $('#relogio').textContent = texto;
+  $('#l-relogio').textContent = texto;
   $('#pausar').textContent = cronometro.pausadoEm ? 'Continuar' : 'Pausar';
+  $('#l-pausar').textContent = cronometro.pausadoEm ? '▶' : '⏸';
+  $('#l-pausar').title = cronometro.pausadoEm ? 'Continuar' : 'Pausar';
+  $('#l-cronometro').hidden = !cronometro.inicio;
+  $('#l-cronometro').classList.toggle('pausado', !!cronometro.pausadoEm);
 }
 function ligarTique() {
   clearInterval(tique);
@@ -247,12 +257,13 @@ function iniciarCronometro() {
     materia_id: p?.materia_id ?? null,
     topico_id: p?.topico?.id ?? null,
     tipo: p?.tipo ?? 'teoria',
+    leitura: null,
   });
   salvarCronometro();
   desenharProximo(p);
   ligarTique();
 }
-$('#pausar').addEventListener('click', () => {
+function alternarPausa() {
   if (cronometro.pausadoEm) {
     cronometro.pausas += Date.now() - cronometro.pausadoEm;
     cronometro.pausadoEm = null;
@@ -261,12 +272,17 @@ $('#pausar').addEventListener('click', () => {
   }
   salvarCronometro();
   desenharRelogio();
-});
+}
+$('#pausar').addEventListener('click', alternarPausa);
+$('#l-pausar').addEventListener('click', alternarPausa);
 $('#descartar').addEventListener('click', () => {
   if (!confirm('Descartar este tempo sem registrar?')) return;
   pararCronometro();
 });
-$('#finalizar').addEventListener('click', () => {
+// O registro já vem com o PDF e o trecho que passou pela tela do leitor durante o cronômetro.
+function finalizarCronometro() {
+  if (document.fullscreenElement) document.exitFullscreen();
+  const l = cronometro.leitura;
   abrirRegistro({
     materia_id: cronometro.materia_id,
     topico_id: cronometro.topico_id,
@@ -274,14 +290,33 @@ $('#finalizar').addEventListener('click', () => {
     tipo: cronometro.tipo,
     duracao_min: Math.max(1, Math.round(segundosCorridos() / 60)),
     inicioMs: cronometro.inicio,
+    material_id: l?.material_id,
+    pagina_de: l?.de,
+    pagina_ate: l?.ate,
     doCronometro: true,
   });
+}
+$('#finalizar').addEventListener('click', finalizarCronometro);
+$('#l-finalizar').addEventListener('click', finalizarCronometro);
+$('#abrir-pdf').addEventListener('click', () => {
+  estado.materiaAberta = cronometro.materia_id ? `m${cronometro.materia_id}` : null;
+  mostrar('materiais');
 });
 function pararCronometro() {
   for (const k of Object.keys(cronometro)) delete cronometro[k];
   salvarCronometro();
   clearInterval(tique);
+  desenharRelogio();
   atualizar();
+}
+// Chamado pelo leitor a cada página na tela: com o cronômetro correndo, guarda o PDF e da menor à maior
+// página vista. Trocou de PDF, vale o último aberto.
+function anotarLeitura(materialId, pagina) {
+  if (!cronometro.inicio || cronometro.pausadoEm) return;
+  const l = cronometro.leitura;
+  if (l?.material_id !== materialId) cronometro.leitura = { material_id: materialId, de: pagina, ate: pagina };
+  else Object.assign(l, { de: Math.min(l.de, pagina), ate: Math.max(l.ate, pagina) });
+  salvarCronometro();
 }
 
 // ---------- registrar estudo ----------
@@ -298,7 +333,36 @@ function preencherTopicos(materiaId, topicoId) {
   );
   $('#f-topico').innerHTML = `<option value="">(nenhum)</option>${opcoes.join('')}`;
 }
-$('#f-materia').addEventListener('change', (e) => preencherTopicos(e.target.value));
+$('#f-materia').addEventListener('change', (e) => {
+  preencherTopicos(e.target.value);
+  preencherMateriais(e.target.value);
+});
+
+// PDFs da matéria escolhida. O PDF já gravado no estudo aparece mesmo se for de outra matéria ou tiver saído da lista.
+let pdfsDoPlano = [];
+function preencherMateriais(materiaId, atual = null) {
+  const daMateria = pdfsDoPlano.filter((m) => m.materia_id === Number(materiaId));
+  if (atual?.id && !daMateria.some((m) => m.id === atual.id)) {
+    daMateria.unshift(pdfsDoPlano.find((m) => m.id === atual.id) ?? { id: atual.id, nome: `${atual.nome ?? 'PDF'} (fora da lista)`, pasta: '' });
+  }
+  const vazio = daMateria.length ? '(nenhum)' : '(nenhum PDF ligado a esta matéria)';
+  $('#f-material').innerHTML = `<option value="">${vazio}</option>` + daMateria
+    .map((m) => `<option value="${m.id}" ${m.id === atual?.id ? 'selected' : ''}>${esc(m.nome)}</option>`).join('');
+  mostrarPaginas();
+}
+function mostrarPaginas() {
+  const m = pdfsDoPlano.find((x) => x.id === Number($('#f-material').value));
+  $('#f-paginas').hidden = !$('#f-material').value;
+  for (const campo of [form.pagina_de, form.pagina_ate]) {
+    if (m?.paginas) campo.max = m.paginas;
+    else campo.removeAttribute('max');
+  }
+}
+$('#f-material').addEventListener('change', () => {
+  form.pagina_de.value = '';
+  form.pagina_ate.value = '';
+  mostrarPaginas();
+});
 
 // Data e hora local no formato do campo datetime-local (YYYY-MM-DDTHH:MM).
 function dataHoraCampo(ms = Date.now()) {
@@ -308,8 +372,9 @@ function dataHoraCampo(ms = Date.now()) {
 }
 
 // Mesma janela para registrar (sem sessao_id) e para corrigir (com sessao_id).
-function abrirRegistro(dados) {
+async function abrirRegistro(dados) {
   registroDoCronometro = !!dados.doCronometro;
+  pdfsDoPlano = (await chamar('materiais', estado.planoId)).lista;
   form.reset();
   const corrigindo = !!dados.sessao_id;
   $('#f-titulo').textContent = corrigindo ? 'Corrigir estudo' : 'Registrar estudo';
@@ -317,6 +382,9 @@ function abrirRegistro(dados) {
   const materiaId = dados.materia_id ?? estado.materias[0]?.id;
   $('#f-materia').value = materiaId;
   preencherTopicos(materiaId, dados.topico_id);
+  preencherMateriais(materiaId, dados.material_id ? { id: dados.material_id, nome: dados.material_nome } : null);
+  form.pagina_de.value = dados.pagina_de ?? '';
+  form.pagina_ate.value = dados.pagina_ate ?? '';
   form.tipo.value = dados.tipo ?? 'teoria';
   form.duracao_min.value = dados.duracao_min ?? '';
   form.inicio.value = dados.inicio ?? dataHoraCampo(dados.inicioMs);
@@ -342,6 +410,9 @@ dialogo.addEventListener('close', async () => {
     anotacao: f.get('anotacao').trim(),
     topico_concluido: f.get('topico_concluido') === 'on',
     bloco_id: Number(f.get('bloco_id')) || null,
+    material_id: Number(f.get('material_id')) || null,
+    pagina_de: Number(f.get('pagina_de')) || null,
+    pagina_ate: Number(f.get('pagina_ate')) || null,
   };
   const sessaoId = Number(f.get('sessao_id'));
   if (sessaoId) {
@@ -934,13 +1005,15 @@ $('#a-refazer-btn').addEventListener('click', async () => {
 });
 
 // ---------- histórico ----------
+const paginas = (s) => (s.pagina_de ? (s.pagina_ate > s.pagina_de ? `, p. ${s.pagina_de} a ${s.pagina_ate}` : `, p. ${s.pagina_de}`) : '');
+
 async function telaHistorico() {
   const linhas = await chamar('historico', estado.planoId);
   $('#historico').innerHTML = linhas.length
     ? linhas
         .map((s) => `<tr>
           <td>${dataBR(s.inicio)} ${s.inicio.slice(11, 16)}</td>
-          <td><span class="bola" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${cor(s.materia_id, s.cor)}"></span> ${esc(s.materia ?? '')}<div class="sutil">${esc(s.topico ?? '')}</div></td>
+          <td><span class="bola" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${cor(s.materia_id, s.cor)}"></span> ${esc(s.materia ?? '')}<div class="sutil">${esc(s.topico ?? '')}</div>${s.material ? `<div class="sutil">📄 ${esc(s.material)}${paginas(s)}</div>` : ''}</td>
           <td>${TIPO[s.tipo]}${s.origem === 'claude' ? ' <span class="etiqueta">Claude</span>' : ''}</td>
           <td>${horas(s.duracao_min)}</td>
           <td>${s.acertos + s.erros ? `${s.acertos}/${s.acertos + s.erros}` : ''}</td>
@@ -992,8 +1065,35 @@ async function telaMateriais() {
   const opcoes = (atual) => `<option value="">Sem matéria</option>` + estado.materias
     .map((m) => `<option value="${m.id}" ${m.id === atual ? 'selected' : ''}>${esc(m.nome)}</option>`).join('');
 
-  $('#m-grupos').innerHTML = [...grupos.values()].map((g) => `
+  // Primeiro as matérias; clicar numa abre só os PDFs dela.
+  const g = grupos.get(estado.materiaAberta);
+  if (!g) {
+    estado.materiaAberta = null;
+    const semPdf = estado.materias.filter((m) => !grupos.has(`m${m.id}`));
+    $('#m-grupos').innerHTML = `<div class="m-materias">${[...grupos.entries()].map(([chave, g]) => {
+      const abertos = g.itens.filter((m) => m.aberto_em).length;
+      const ultimo = g.itens.filter((m) => m.aberto_em).sort((a, b) => b.aberto_em.localeCompare(a.aberto_em))[0];
+      return `<button class="cartao m-cartao" data-grupo="${esc(chave)}">
+        <span class="m-cabeca">${g.materiaId ? `<span class="ponto" style="background:${cor(g.materiaId, g.cor)}"></span>` : '📁'}<strong>${esc(g.titulo)}</strong></span>
+        <span class="sutil">${g.itens.length} PDF${g.itens.length === 1 ? '' : 's'} · ${abertos} já aberto${abertos === 1 ? '' : 's'}</span>
+        <span class="m-barra"><span style="width:${(abertos / g.itens.length) * 100}%"></span></span>
+        <span class="sutil m-ultimo">${ultimo ? `Último: ${esc(ultimo.nome)}` : 'Nenhum aberto ainda'}</span>
+      </button>`;
+    }).join('')}${semPdf.map((m) => `<div class="cartao m-cartao vazia">
+        <span class="m-cabeca"><span class="ponto" style="background:${cor(m.id, m.cor)}"></span><strong>${esc(m.nome)}</strong></span>
+        <span class="sutil">Nenhum PDF ligado</span>
+      </div>`).join('')}</div>`;
+    $('#m-grupos').querySelectorAll('[data-grupo]').forEach((b) => b.addEventListener('click', () => {
+      estado.materiaAberta = b.dataset.grupo;
+      telaMateriais();
+      $('main').scrollTop = 0;
+    }));
+    return;
+  }
+
+  $('#m-grupos').innerHTML = `
     <div class="cartao grupo-material">
+      <button id="m-voltar" class="texto m-voltar">← Todas as matérias</button>
       <h3>${g.materiaId ? `<span class="ponto" style="background:${cor(g.materiaId, g.cor)}"></span>` : '📁'} ${esc(g.titulo)}
         <span class="sutil">${g.itens.length} PDF${g.itens.length === 1 ? '' : 's'}</span></h3>
       <ul class="materiais">${g.itens.sort(porNome).map((m) => {
@@ -1007,8 +1107,12 @@ async function telaMateriais() {
           <button class="secundario" data-abrir="${m.id}">${m.aberto_em ? 'Continuar' : 'Abrir'}</button>
         </li>`;
       }).join('')}</ul>
-    </div>`).join('');
+    </div>`;
 
+  $('#m-voltar').addEventListener('click', () => {
+    estado.materiaAberta = null;
+    telaMateriais();
+  });
   $('#m-grupos').querySelectorAll('[data-abrir]').forEach((b) => b.addEventListener('click', () => lerMaterial(Number(b.dataset.abrir))));
   $('#m-grupos').querySelectorAll('[data-materia]').forEach((s) => s.addEventListener('change', async () => {
     await chamar('associarMaterial', Number(s.dataset.materia), s.value ? Number(s.value) : null);
@@ -1019,7 +1123,7 @@ async function telaMateriais() {
 async function lerMaterial(id) {
   mostrar('leitor');
   try {
-    await abrirLeitor(await chamar('abrirMaterial', id), chamar);
+    await abrirLeitor(await chamar('abrirMaterial', id), chamar, anotarLeitura);
   } catch (erro) {
     $('#l-paginas').innerHTML = `<p class="sutil">Não foi possível abrir: ${esc(erro.message)}</p>`;
   }

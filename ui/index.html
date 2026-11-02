@@ -66,6 +66,7 @@
           <div id="cronometro" hidden>
             <div class="relogio" id="relogio">00:00:00</div>
             <div class="botoes">
+              <button id="abrir-pdf" class="texto" title="Abrir os PDFs desta matéria; o cronômetro continua no leitor">📄 Abrir PDF</button>
               <button id="pausar" class="secundario">Pausar</button>
               <button id="finalizar" class="primario">Finalizar e registrar</button>
               <button id="descartar" class="texto">Descartar</button>
@@ -242,6 +243,11 @@
           <span id="l-zoom" class="sutil"></span>
           <button id="l-mais" class="texto" title="Aumentar">+</button>
         </div>
+        <div id="l-cronometro" class="l-cronometro" hidden title="Cronômetro do estudo em andamento">
+          <span id="l-relogio">00:00:00</span>
+          <button id="l-pausar" class="texto" title="Pausar">⏸</button>
+          <button id="l-finalizar" class="secundario" title="Finalizar e registrar o estudo">Finalizar</button>
+        </div>
         <div class="l-ferramentas">
           <span class="l-cores" role="radiogroup" aria-label="Cor da marcação">
             <button data-cor="amarelo" title="Amarelo (1)"></button><button data-cor="verde" title="Verde (2)"></button><button data-cor="azul" title="Azul (3)"></button><button data-cor="rosa" title="Rosa (4)"></button>
@@ -279,6 +285,11 @@
       <h2 id="f-titulo">Registrar estudo</h2>
       <label>Matéria <select name="materia_id" id="f-materia" required></select></label>
       <label>Assunto <select name="topico_id" id="f-topico"></select></label>
+      <label>PDF estudado <select name="material_id" id="f-material"></select></label>
+      <div class="linha" id="f-paginas" hidden>
+        <label>Da página <input name="pagina_de" type="number" min="1" step="1"></label>
+        <label>Até a página <input name="pagina_ate" type="number" min="1" step="1"></label>
+      </div>
       <div class="linha">
         <label>Tipo
           <select name="tipo">
