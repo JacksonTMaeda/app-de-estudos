@@ -10,6 +10,7 @@ import { importarEdital } from '../src/edital.js';
 import { gerarCiclo } from '../src/ciclo.js';
 import * as s from '../src/servico.js';
 import { prepararQuestoes } from '../src/questoes.js';
+import * as materiais from '../src/materiais.js';
 
 function bancoDeTeste() {
   const caminho = join(mkdtempSync(join(tmpdir(), 'mcp-')), 'estudos.db');
@@ -211,6 +212,22 @@ test('Claude vê os materiais, marca a página, liga à matéria e relê a pasta
   const [bizu] = (await chamarFerramenta(c, 'materiais', { materia: 'sem materia' })).dados.materiais;
   assert.equal((await chamarFerramenta(c, 'ligar_material', { material_id: bizu.id, materia: 'Lógica' })).dados.materia, 'Lógica');
   assert.equal((await chamarFerramenta(c, 'materiais', { materia: 'Lógica' })).dados.materiais.length, 1);
+
+  // Marcações feitas no leitor do app aparecem para o Claude, só para leitura.
+  assert.equal((await chamarFerramenta(c, 'marcacoes')).dados.total, 0);
+  const app = abrirBanco(caminho);
+  materiais.prepararMateriais(app);
+  materiais.lerPdf(app, aula.id);
+  materiais.marcar(app, aula.id, { pagina: 2, tipo: 'grifo', cor: 'amarelo', retangulos: [[0.1, 0.5, 0.3, 0.02]], texto: 'Crase antes de palavra feminina' });
+  materiais.marcar(app, aula.id, { pagina: 1, tipo: 'nota', cor: 'rosa', retangulos: [[0.5, 0.5, 0.03, 0.02]], nota: 'Cai na PRF' });
+  app.close();
+  const marcadas = await chamarFerramenta(c, 'marcacoes', { materia: 'Português' });
+  assert.equal(marcadas.dados.total, 2);
+  assert.deepEqual(marcadas.dados.materiais.map((g) => g.material), ['Aula 01']);
+  assert.deepEqual(marcadas.dados.materiais[0].marcacoes.map((m) => [m.pagina, m.trecho, m.nota]), [[1, null, 'Cai na PRF'], [2, 'Crase antes de palavra feminina', null]]);
+  assert.equal((await chamarFerramenta(c, 'marcacoes', { materia: 'Lógica' })).dados.total, 0);
+  const lista = await c.pedir('tools/list', {});
+  assert.equal(lista.result.tools.find((f) => f.name === 'marcacoes').annotations.readOnlyHint, true);
 });
 
 test('Claude cadastra fase, vê a virada, conta o bloco misturado e ajusta lotes, metas e preferências', async (t) => {

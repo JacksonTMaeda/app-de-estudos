@@ -25,14 +25,14 @@ O programa se atualiza sozinho: ao abrir (e a cada 6 horas) ele confere as relea
 - **Semana como meta ou teto:** no modo teto, o tempo da semana é limite e a tela não mostra o que faltou como atraso.
 - **Questões:** importa quizzes em HTML, filtra por matéria, banca, lote e situação, corrige com comentário e pergunta a causa de cada erro. Lote reservado (cadeado) fica fora das rodadas até a data de liberação. **Simulado:** X questões por matéria, cronômetro único (com tempo limite opcional), gabarito e resultado por matéria só na entrega.
 - **Análise:** acerto por semana, matéria (com a meta de acerto, se houver), banca e tema, causas dos erros, questões para refazer.
-- **Materiais:** escolha a pasta dos PDFs; cada subpasta com o nome de uma matéria fica ligada a ela (dá para trocar à mão). O leitor abre na página onde você parou, com zoom e texto selecionável. O PDF fica onde está: o app guarda só o caminho e a página.
+- **Materiais:** escolha a pasta dos PDFs; cada subpasta com o nome de uma matéria fica ligada a ela (dá para trocar à mão). O leitor abre na página onde você parou, com zoom, texto selecionável e tela cheia. Dá para grifar em 4 cores, sublinhar e anotar (nota presa ao trecho ou solta na página), com uma lista das marcações do PDF. Atalhos: 1 a 4 grifam, S sublinha, N anota, M liga o marca-texto, F tela cheia. O PDF fica onde está e nunca é alterado: o app guarda o caminho, a página e as marcações no banco, presas ao conteúdo do arquivo (mover ou renomear o PDF não perde nada).
 - **Edital** e **Histórico** (corrigir e apagar estudo).
 
 ## Ponte com o Claude (servidor MCP)
 
 `src/mcp.js` deixa o Claude consultar e mexer no app ao vivo:
 
-- **Ler:** `ver_plano`, `proximo_estudo`, `resumo_periodo`, `revisoes_pendentes`, `historico_sessoes`, `analise_questoes`, `assuntos_da_materia`, `materiais` (PDFs com a página onde parou e o caminho do arquivo), `ver_fases`, `lotes_de_questoes`, `resultado_simulados`.
+- **Ler:** `ver_plano`, `proximo_estudo`, `resumo_periodo`, `revisoes_pendentes`, `historico_sessoes`, `analise_questoes`, `assuntos_da_materia`, `materiais` (PDFs com a página onde parou e o caminho do arquivo), `marcacoes` (o que foi grifado e anotado no leitor), `ver_fases`, `lotes_de_questoes`, `resultado_simulados`.
 - **Gravar:** `registrar_estudo`, `corrigir_estudo`, `marcar_assunto`, `concluir_revisao`, `ajustar_conhecimento`, `refazer_ciclo`, `definir_data_prova`, `adicionar_questoes`, `criar_plano`, `marcar_pagina_material`, `ligar_material`, `atualizar_materiais`, `definir_fase`, `reservar_lote`, `definir_meta_acerto`, `ajustar_preferencias`.
 - **Apagar:** `apagar_estudo`, `apagar_questao`, `apagar_plano` (este exige o nome exato do plano), `apagar_fase`. Antes de apagar, o servidor guarda uma cópia do banco.
 

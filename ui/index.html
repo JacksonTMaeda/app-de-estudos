@@ -242,8 +242,21 @@
           <span id="l-zoom" class="sutil"></span>
           <button id="l-mais" class="texto" title="Aumentar">+</button>
         </div>
+        <div class="l-ferramentas">
+          <span class="l-cores" role="radiogroup" aria-label="Cor da marcação">
+            <button data-cor="amarelo" title="Amarelo (1)"></button><button data-cor="verde" title="Verde (2)"></button><button data-cor="azul" title="Azul (3)"></button><button data-cor="rosa" title="Rosa (4)"></button>
+          </span>
+          <button id="l-marcatexto" class="texto" title="Marca-texto (M): ligado, todo trecho que você selecionar vira grifo na cor escolhida">🖍️</button>
+          <button id="l-nova-nota" class="texto" title="Nota solta (N): depois clique no lugar da página">📝</button>
+          <button id="l-ver-lista" class="texto" title="Marcações deste PDF">☰ <span id="l-contagem"></span></button>
+          <button id="l-tela-cheia" class="texto" title="Tela cheia (F; Esc sai)">⛶</button>
+        </div>
       </div>
-      <div id="l-paginas" class="l-paginas" tabindex="0"></div>
+      <div class="l-corpo">
+        <div id="l-paginas" class="l-paginas" tabindex="0"></div>
+        <aside id="l-lista" class="l-lista" hidden></aside>
+      </div>
+      <div id="l-menu" class="l-menu" hidden></div>
     </section>
 
     <section id="tela-edital" class="tela" hidden>

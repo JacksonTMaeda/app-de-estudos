@@ -1019,7 +1019,7 @@ async function telaMateriais() {
 async function lerMaterial(id) {
   mostrar('leitor');
   try {
-    await abrirLeitor(await chamar('abrirMaterial', id), (materialId, pagina, paginas) => chamar('guardarPagina', materialId, pagina, paginas));
+    await abrirLeitor(await chamar('abrirMaterial', id), chamar);
   } catch (erro) {
     $('#l-paginas').innerHTML = `<p class="sutil">Não foi possível abrir: ${esc(erro.message)}</p>`;
   }

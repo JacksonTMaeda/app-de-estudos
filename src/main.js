@@ -96,6 +96,10 @@ const api = {
   associarMaterial: (materialId, materiaId) => materiais.associarMateria(db, materialId, materiaId),
   abrirMaterial: (materialId) => ({ ...materiais.obterMaterial(db, materialId), bytes: materiais.lerPdf(db, materialId) }),
   guardarPagina: (materialId, pagina, paginas) => materiais.guardarPagina(db, materialId, pagina, paginas),
+  marcacoes: (materialId) => materiais.listarMarcacoes(db, materialId),
+  marcar: (materialId, dados) => materiais.marcar(db, materialId, dados),
+  editarMarcacao: (id, dados) => materiais.editarMarcacao(db, id, dados),
+  apagarMarcacao: (id) => materiais.apagarMarcacao(db, id),
   importarEdital: async () => {
     const escolha = await dialog.showOpenDialog({
       title: 'Escolha o edital em markdown',

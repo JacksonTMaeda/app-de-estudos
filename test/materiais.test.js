@@ -122,3 +122,81 @@ test('PDF com nome começando por dois pontos abre normalmente', () => {
   assert.equal(mt.lerPdf(db, m.id).toString(), '%PDF-1.4 teste');
   limpar();
 });
+
+test('grifo, sublinhado e nota ficam no banco e o PDF não muda', () => {
+  const { db, planoId, raiz, pdf, limpar } = preparar();
+  pdf('Portugues', 'Aula.pdf');
+  mt.escanearPasta(db, planoId, raiz);
+  const [m] = mt.listarMateriais(db, planoId);
+  const ret = [[0.1, 0.2, 0.5, 0.02]];
+  // Antes de abrir no leitor o PDF não tem impressão digital: não dá para marcar.
+  assert.throws(() => mt.marcar(db, m.id, { pagina: 1, tipo: 'grifo', cor: 'amarelo', retangulos: ret, texto: 'Crase' }), /Abra o PDF/);
+  mt.lerPdf(db, m.id);
+  mt.guardarPagina(db, m.id, 1, 10);
+  const grifo = mt.marcar(db, m.id, { pagina: 3, tipo: 'grifo', cor: 'amarelo', retangulos: [[0.1, 0.6, 0.5, 0.02]], texto: '  A crase\n é a fusão ' });
+  assert.equal(grifo.texto, 'A crase é a fusão');
+  mt.marcar(db, m.id, { pagina: 3, tipo: 'sublinhado', cor: 'azul', retangulos: ret, texto: 'Topo' });
+  mt.marcar(db, m.id, { pagina: 1, tipo: 'nota', cor: 'rosa', retangulos: [[0.5, 0.5, 0.03, 0.02]], nota: 'Revisar\nisto' });
+  // Ordem de leitura: página, depois de cima para baixo.
+  assert.deepEqual(mt.listarMarcacoes(db, m.id).map((x) => x.texto || x.nota), ['Revisar\nisto', 'Topo', 'A crase é a fusão']);
+
+  const editado = mt.editarMarcacao(db, grifo.id, { cor: 'verde', tipo: 'sublinhado', nota: 'cai muito' });
+  assert.deepEqual([editado.cor, editado.tipo, editado.nota, editado.texto], ['verde', 'sublinhado', 'cai muito', 'A crase é a fusão']);
+  assert.equal(mt.editarMarcacao(db, grifo.id, { nota: '   ' }).nota, null);
+  mt.apagarMarcacao(db, grifo.id);
+  assert.equal(mt.listarMarcacoes(db, m.id).length, 2);
+  assert.equal(mt.lerPdf(db, m.id).toString(), '%PDF-1.4 teste');
+  limpar();
+});
+
+test('marcação recusa dado torto vindo da tela', () => {
+  const { db, planoId, raiz, pdf, limpar } = preparar();
+  pdf('Portugues', 'Aula.pdf');
+  mt.escanearPasta(db, planoId, raiz);
+  const [m] = mt.listarMateriais(db, planoId);
+  mt.lerPdf(db, m.id);
+  mt.guardarPagina(db, m.id, 1, 5);
+  const base = { pagina: 1, tipo: 'grifo', cor: 'amarelo', retangulos: [[0.1, 0.1, 0.2, 0.02]], texto: 'x' };
+  assert.throws(() => mt.marcar(db, m.id, { ...base, pagina: 6 }), /fora do PDF/);
+  assert.throws(() => mt.marcar(db, m.id, { ...base, cor: '#f00' }), /Cor desconhecida/);
+  assert.throws(() => mt.marcar(db, m.id, { ...base, tipo: 'tachado' }), /Tipo/);
+  assert.throws(() => mt.marcar(db, m.id, { ...base, retangulos: [] }), /retângulos/);
+  assert.throws(() => mt.marcar(db, m.id, { ...base, retangulos: [[0, 0, 3, 1]] }), /fora da página/);
+  assert.throws(() => mt.marcar(db, m.id, { ...base, texto: 'a'.repeat(5001) }), /5000/);
+  const nota = mt.marcar(db, m.id, { ...base, tipo: 'nota', texto: '' });
+  assert.throws(() => mt.editarMarcacao(db, nota.id, { tipo: 'grifo' }), /Só grifo e sublinhado/);
+  limpar();
+});
+
+test('marcações seguem o arquivo: mover o PDF de pasta não perde nada', () => {
+  const { db, planoId, raiz, pdf, limpar } = preparar();
+  pdf('Portugues', 'Aula.pdf');
+  mt.escanearPasta(db, planoId, raiz);
+  const [antes] = mt.listarMateriais(db, planoId);
+  mt.lerPdf(db, antes.id);
+  mt.marcar(db, antes.id, { pagina: 1, tipo: 'grifo', cor: 'verde', retangulos: [[0.1, 0.1, 0.2, 0.02]], texto: 'Crase' });
+  rmSync(join(raiz, 'Portugues'), { recursive: true });
+  pdf('Raciocinio Logico', 'Aula movida.pdf');
+  mt.escanearPasta(db, planoId, raiz);
+  const [depois] = mt.listarMateriais(db, planoId);
+  assert.notEqual(depois.id, antes.id);
+  mt.lerPdf(db, depois.id);
+  assert.deepEqual(mt.listarMarcacoes(db, depois.id).map((x) => x.texto), ['Crase']);
+  const doPlano = mt.marcacoesDoPlano(db, planoId);
+  assert.deepEqual(doPlano.map((x) => [x.material, x.materia, x.texto]), [['Aula movida', 'Raciocínio Lógico-Matemático', 'Crase']]);
+  limpar();
+});
+
+test('banco da 1.1 ganha a coluna e a tabela das marcações sem perder material', () => {
+  const db = abrirBanco(':memory:');
+  db.exec(`CREATE TABLE material (id INTEGER PRIMARY KEY, plano_id INTEGER NOT NULL, materia_id INTEGER, caminho TEXT NOT NULL,
+    nome TEXT NOT NULL, pasta TEXT NOT NULL DEFAULT '', paginas INTEGER, ultima_pagina INTEGER NOT NULL DEFAULT 1, aberto_em TEXT,
+    UNIQUE (plano_id, caminho));
+    INSERT INTO plano (id, nome) VALUES (1, 'Velho');
+    INSERT INTO material (plano_id, caminho, nome, ultima_pagina) VALUES (1, 'C:/x.pdf', 'x', 9);`);
+  mt.prepararMateriais(db);
+  assert.equal(mt.obterMaterial(db, 1).ultima_pagina, 9);
+  assert.equal(mt.obterMaterial(db, 1).arquivo, null);
+  assert.deepEqual(mt.listarMarcacoes(db, 1), []);
+  mt.prepararMateriais(db); // de novo, sem erro
+});

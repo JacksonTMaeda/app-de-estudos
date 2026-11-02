@@ -585,6 +585,42 @@ Object.assign(FERRAMENTAS, {
     },
   },
 
+  marcacoes: {
+    description:
+      'O que a pessoa grifou, sublinhou e anotou nos PDFs pelo leitor do app: trecho, página, cor e nota de cada marcação, em ordem de leitura. ' +
+      'Serve para montar questões, resumo ou revisão a partir do que ela destacou. Sem filtro: todas do plano. ' +
+      'As marcações moram no banco do app (o PDF não é alterado) e só aparecem depois que o PDF foi aberto no leitor.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...PLANO,
+        material_id: { type: 'integer', description: 'Só deste PDF (id da ferramenta materiais).' },
+        materia: { type: 'string', description: 'Só dos PDFs desta matéria (nome ou parte do nome).' },
+      },
+    },
+    rodar({ plano_id, material_id, materia }) {
+      const plano = escolherPlano(plano_id);
+      const filtro = {
+        materialId: material_id ?? null,
+        materiaId: materia ? materiaPorNome(plano.id, materia).id : null,
+      };
+      const todas = materiais.marcacoesDoPlano(banco(), plano.id, filtro);
+      const LIMITE_MARCACOES = 400;
+      const porMaterial = new Map();
+      for (const m of todas.slice(0, LIMITE_MARCACOES)) {
+        const grupo = porMaterial.get(m.material_id) ?? { material_id: m.material_id, material: m.material, materia: m.materia ?? null, marcacoes: [] };
+        grupo.marcacoes.push({ pagina: m.pagina, tipo: m.tipo, cor: m.cor, trecho: m.texto || null, nota: m.nota, criada_em: m.criado_em });
+        porMaterial.set(m.material_id, grupo);
+      }
+      return {
+        plano: plano.nome,
+        total: todas.length,
+        ...(todas.length > LIMITE_MARCACOES && { aviso: `Mostrando as ${LIMITE_MARCACOES} primeiras; filtre por material_id ou matéria para ver o resto.` }),
+        materiais: [...porMaterial.values()],
+      };
+    },
+  },
+
   marcar_pagina_material: {
     description: 'Grava a página onde a pessoa parou num PDF (por exemplo, quando ela conta que leu até tal página fora do app). O leitor do app abre nessa página.',
     inputSchema: {

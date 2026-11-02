@@ -1,8 +1,9 @@
 // Materiais em PDF: o app guarda só o caminho e a página onde parou. O PDF nunca é copiado,
-// movido nem alterado; ele continua na pasta de quem estuda.
+// movido nem alterado; ele continua na pasta de quem estuda. Grifos e notas também moram no banco.
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { join, relative, resolve, sep, isAbsolute } from 'node:path';
-import { transacao } from './db.js';
+import { createHash } from 'node:crypto';
+import { colunasDe, transacao } from './db.js';
 
 const ESQUEMA = `
 CREATE TABLE IF NOT EXISTS material (
@@ -17,6 +18,22 @@ CREATE TABLE IF NOT EXISTS material (
   aberto_em TEXT,
   UNIQUE (plano_id, caminho)
 );
+
+-- 1.2: grifos, sublinhados e notas do leitor. Presos à impressão digital do PDF (sha256 dos bytes),
+-- não ao material: mover ou renomear o arquivo, ou usá-lo em outro plano, não perde as marcações.
+-- Retângulos em fração da página (0 a 1), para valer em qualquer zoom.
+CREATE TABLE IF NOT EXISTS marcacao (
+  id INTEGER PRIMARY KEY,
+  arquivo TEXT NOT NULL,
+  pagina INTEGER NOT NULL,
+  tipo TEXT NOT NULL CHECK (tipo IN ('grifo', 'sublinhado', 'nota')),
+  cor TEXT NOT NULL,
+  retangulos TEXT NOT NULL,
+  texto TEXT NOT NULL DEFAULT '',
+  nota TEXT,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS marcacao_arquivo ON marcacao (arquivo, pagina);
 `;
 const PROFUNDIDADE = 4;
 const LIMITE = 5000;
@@ -24,6 +41,7 @@ const LIMITE = 5000;
 export function prepararMateriais(db) {
   try {
     db.exec(ESQUEMA);
+    if (!colunasDe(db, 'material').has('arquivo')) db.exec('ALTER TABLE material ADD COLUMN arquivo TEXT');
   } catch (erro) {
     // Aberto só para leitura (servidor MCP): o app cria a tabela na próxima vez que abrir.
     if (!/readonly/i.test(erro.message)) throw erro;
@@ -172,5 +190,128 @@ export function lerPdf(db, materialId) {
     throw new Error('Material fora da pasta de materiais do plano.');
   }
   if (!existsSync(mt.caminho)) throw new Error(`O arquivo não está mais na pasta: ${mt.nome}. Atualize a lista.`);
-  return readFileSync(mt.caminho);
+  const bytes = readFileSync(mt.caminho);
+  const arquivo = createHash('sha256').update(bytes).digest('hex');
+  if (arquivo !== mt.arquivo) db.prepare('UPDATE material SET arquivo = ? WHERE id = ?').run(arquivo, materialId);
+  return bytes;
+}
+
+// ---------- marcações do leitor ----------
+export const TIPOS_MARCACAO = ['grifo', 'sublinhado', 'nota'];
+export const CORES_MARCACAO = ['amarelo', 'verde', 'azul', 'rosa'];
+const MAX_RETANGULOS = 400;
+const MAX_TEXTO = 5000;
+
+const temArquivo = (db) => colunasDe(db, 'material').has('arquivo');
+
+// Impressão digital do PDF; só existe depois que o leitor abriu o arquivo uma vez.
+function arquivoDe(db, materialId) {
+  const { arquivo } = obterMaterial(db, materialId);
+  if (!arquivo) throw new Error('Abra o PDF no leitor antes de marcar.');
+  return arquivo;
+}
+
+const lerMarcacao = (m) => ({ ...m, retangulos: JSON.parse(m.retangulos) });
+// Na página, de cima para baixo: é a ordem de leitura.
+const ordemDeLeitura = (a, b) => a.pagina - b.pagina || (a.retangulos[0]?.[1] ?? 0) - (b.retangulos[0]?.[1] ?? 0) || a.id - b.id;
+
+function obterMarcacao(db, id) {
+  const m = db.prepare('SELECT id, pagina, tipo, cor, retangulos, texto, nota, criado_em FROM marcacao WHERE id = ?').get(id);
+  if (!m) throw new Error(`Marcação ${id} não existe.`);
+  return lerMarcacao(m);
+}
+
+const textoLimpo = (t, campo) => {
+  if (t == null) return null;
+  if (typeof t !== 'string') throw new Error(`${campo} precisa ser texto.`);
+  const limpo = t.replace(/\s+/g, ' ').trim();
+  if (limpo.length > MAX_TEXTO) throw new Error(`${campo} passa de ${MAX_TEXTO} caracteres.`);
+  return limpo;
+};
+// Nota guarda as quebras de linha; o trecho grifado não.
+const notaLimpa = (t) => {
+  if (t == null) return null;
+  if (typeof t !== 'string') throw new Error('A nota precisa ser texto.');
+  const limpa = t.replace(/\r\n/g, '\n').trim();
+  if (limpa.length > MAX_TEXTO) throw new Error(`A nota passa de ${MAX_TEXTO} caracteres.`);
+  return limpa || null;
+};
+
+function validarCor(cor) {
+  if (!CORES_MARCACAO.includes(cor)) throw new Error(`Cor desconhecida: ${cor}. Use ${CORES_MARCACAO.join(', ')}.`);
+  return cor;
+}
+
+// Cada retângulo é [x, y, largura, altura] em fração da página.
+function validarRetangulos(rets) {
+  const fracao = (x) => typeof x === 'number' && Number.isFinite(x) && x >= -0.01 && x <= 1.01;
+  if (!Array.isArray(rets) || rets.length === 0 || rets.length > MAX_RETANGULOS) throw new Error('Marcação sem retângulos válidos.');
+  for (const r of rets) {
+    if (!Array.isArray(r) || r.length !== 4 || !r.every(fracao)) throw new Error('Retângulo fora da página.');
+  }
+  return rets.map((r) => r.map((x) => Math.round(x * 10000) / 10000));
+}
+
+export function listarMarcacoes(db, materialId) {
+  const { arquivo } = obterMaterial(db, materialId);
+  if (!arquivo) return [];
+  return db.prepare('SELECT id, pagina, tipo, cor, retangulos, texto, nota, criado_em FROM marcacao WHERE arquivo = ?')
+    .all(arquivo).map(lerMarcacao).sort(ordemDeLeitura);
+}
+
+export function marcar(db, materialId, { pagina, tipo, cor, retangulos, texto, nota }) {
+  const arquivo = arquivoDe(db, materialId);
+  const { paginas } = obterMaterial(db, materialId);
+  const p = Math.floor(Number(pagina));
+  if (!(p >= 1) || (paginas && p > paginas)) throw new Error(`Página ${pagina} fora do PDF.`);
+  if (!TIPOS_MARCACAO.includes(tipo)) throw new Error(`Tipo de marcação desconhecido: ${tipo}.`);
+  const { lastInsertRowid } = db.prepare(`INSERT INTO marcacao (arquivo, pagina, tipo, cor, retangulos, texto, nota)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`).run(arquivo, p, tipo, validarCor(cor), JSON.stringify(validarRetangulos(retangulos)),
+    textoLimpo(texto, 'O trecho') ?? '', notaLimpa(nota));
+  return obterMarcacao(db, Number(lastInsertRowid));
+}
+
+// Muda cor, tipo (grifo e sublinhado trocam entre si) ou nota. Campo ausente fica como está.
+export function editarMarcacao(db, id, { cor, tipo, nota } = {}) {
+  const atual = obterMarcacao(db, id);
+  if (tipo !== undefined && (atual.tipo === 'nota' || !['grifo', 'sublinhado'].includes(tipo))) {
+    throw new Error('Só grifo e sublinhado trocam de tipo entre si.');
+  }
+  db.prepare('UPDATE marcacao SET cor = ?, tipo = ?, nota = ? WHERE id = ?').run(
+    cor === undefined ? atual.cor : validarCor(cor),
+    tipo ?? atual.tipo,
+    nota === undefined ? atual.nota : notaLimpa(nota),
+    id,
+  );
+  return obterMarcacao(db, id);
+}
+
+export function apagarMarcacao(db, id) {
+  obterMarcacao(db, id);
+  db.prepare('DELETE FROM marcacao WHERE id = ?').run(id);
+}
+
+// Para o Claude: marcações dos PDFs do plano, com o material e a matéria de cada uma.
+export function marcacoesDoPlano(db, planoId, { materialId, materiaId } = {}) {
+  if (!temArquivo(db)) return [];
+  const filtros = ['mt.plano_id = ?'];
+  const args = [planoId];
+  if (materialId != null) {
+    filtros.push('mt.id = ?');
+    args.push(materialId);
+  }
+  if (materiaId != null) {
+    filtros.push('mt.materia_id = ?');
+    args.push(materiaId);
+  }
+  const linhas = db.prepare(`
+    SELECT mc.id, mt.id AS material_id, mt.nome AS material, m.nome AS materia, mc.pagina, mc.tipo, mc.cor,
+           mc.texto, mc.nota, mc.criado_em, mc.retangulos
+    FROM marcacao mc JOIN material mt ON mt.arquivo = mc.arquivo LEFT JOIN materia m ON m.id = mt.materia_id
+    WHERE ${filtros.join(' AND ')}
+    ORDER BY m.posicao IS NULL, m.posicao, mt.pasta, mt.nome, mt.id`).all(...args).map(lerMarcacao);
+  // Mantém a ordem dos materiais e põe cada um em ordem de leitura.
+  const ordem = new Map();
+  for (const l of linhas) if (!ordem.has(l.material_id)) ordem.set(l.material_id, ordem.size);
+  return linhas.sort((a, b) => ordem.get(a.material_id) - ordem.get(b.material_id) || ordemDeLeitura(a, b));
 }

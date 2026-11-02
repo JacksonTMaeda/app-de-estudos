@@ -1,6 +1,7 @@
 // Leitor de PDF (PDF.js). Desenha só as páginas perto da tela, guarda a página onde parou
-// e põe o texto da página por cima da imagem, para selecionar e copiar.
+// e põe o texto da página por cima da imagem, para selecionar e copiar. Grifos e notas em marcacoes.js.
 import * as pdfjs from '../node_modules/pdfjs-dist/build/pdf.min.mjs';
+import { camadaDeMarcas, carregarMarcacoes, ligarMarcacoes, limparMarcacoes } from './marcacoes.js';
 
 const BASE = new URL('../node_modules/pdfjs-dist/', import.meta.url).href;
 pdfjs.GlobalWorkerOptions.workerSrc = `${BASE}build/pdf.worker.min.mjs`;
@@ -11,9 +12,10 @@ const leitor = { material: null, doc: null, escala: 1, tamanho: null, pagina: 1,
 
 const escalaSalva = () => Number(localStorage.getItem('leitor_escala')) || null;
 
-// Abre o material na página onde parou. guardar(id, pagina, paginas) grava no banco.
-export async function abrirLeitor(material, guardar) {
+// Abre o material na página onde parou. chamar é a ponte com o banco (window.estudos.chamar).
+export async function abrirLeitor(material, chamar) {
   await fecharLeitor();
+  const guardar = (materialId, pagina, paginas) => chamar('guardarPagina', materialId, pagina, paginas);
   leitor.material = material;
   leitor.guardar = guardar;
   $('#l-nome').textContent = material.nome;
@@ -33,6 +35,7 @@ export async function abrirLeitor(material, guardar) {
   leitor.escala = escalaSalva() ?? limitar((caixa.clientWidth - 40) / v.width);
   $('#l-total').textContent = `de ${leitor.doc.numPages}`;
   $('#l-pagina').max = leitor.doc.numPages;
+  await carregarMarcacoes(material.id, chamar);
   montarPaginas(Math.min(material.ultima_pagina || 1, leitor.doc.numPages));
   guardar(material.id, leitor.pagina, leitor.doc.numPages);
 }
@@ -40,6 +43,8 @@ export async function abrirLeitor(material, guardar) {
 export async function fecharLeitor() {
   if (!leitor.doc) return;
   clearTimeout(leitor.salvar);
+  if (document.fullscreenElement) document.exitFullscreen();
+  limparMarcacoes();
   await leitor.guardar(leitor.material.id, leitor.pagina, leitor.doc.numPages);
   leitor.observador?.disconnect();
   const doc = leitor.doc;
@@ -88,7 +93,7 @@ async function desenhar(div) {
   try {
     await page.render({ canvas, canvasContext: canvas.getContext('2d'), viewport: vp, transform: dpr === 1 ? null : [dpr, 0, 0, dpr, 0, 0] }).promise;
     if (div.dataset.escala !== String(escala) || doc !== leitor.doc) return;
-    div.replaceChildren(canvas, camada);
+    div.replaceChildren(canvas, camadaDeMarcas(Number(div.dataset.n)), camada);
     await new pdfjs.TextLayer({ textContentSource: page.streamTextContent(), container: camada, viewport: vp }).render();
   } catch (erro) {
     if (erro?.name !== 'RenderingCancelledException') console.error('Leitor:', erro);
@@ -102,13 +107,15 @@ function apagar(div) {
   div.replaceChildren(Object.assign(document.createElement('span'), { className: 'num', textContent: div.dataset.n }));
 }
 
-function irParaPagina(n) {
+// altura: fração da página que deve aparecer perto do topo (a lista de marcações leva até o trecho).
+function irParaPagina(n, altura = 0) {
   const total = leitor.doc?.numPages ?? 1;
   n = Math.min(total, Math.max(1, Math.floor(n) || 1));
   const alvo = caixa.querySelector(`.l-pagina[data-n="${n}"]`);
-  if (alvo) caixa.scrollTop = alvo.offsetTop - 8;
+  if (alvo) caixa.scrollTop = alvo.offsetTop - 8 + Math.max(0, altura * alvo.offsetHeight - 80);
   marcarPagina(n);
 }
+ligarMarcacoes(irParaPagina);
 
 function marcarPagina(n) {
   if (n === leitor.pagina && $('#l-pagina').value === String(n)) return;
