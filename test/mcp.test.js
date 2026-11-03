@@ -24,9 +24,10 @@ function bancoDeTeste() {
 }
 
 // Conversa com o servidor como um cliente MCP: uma mensagem por linha, espera a resposta de cada id.
+// ESTUDOS_NAO_ABRIR: teste nunca abre a janela do programa.
 function conversar(caminho) {
   const proc = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'src/mcp.js'], {
-    env: { ...process.env, ESTUDOS_DB: caminho },
+    env: { ...process.env, ESTUDOS_DB: caminho, ESTUDOS_NAO_ABRIR: '1' },
   });
   const esperando = new Map();
   createInterface({ input: proc.stdout }).on('line', (l) => {
@@ -330,4 +331,24 @@ test('o servidor confere os números que o Claude manda, mesmo fora do esquema',
   const plano = await chamarFerramenta(c, 'ver_plano');
   assert.equal(plano.dados.materias[0].meta_acerto_pct, null);
   assert.equal(plano.dados.semana.modo, 'meta');
+});
+
+test('Claude abre no app uma rodada com as questões escolhidas, na ordem pedida', async (t) => {
+  const c = conversar(bancoDeTeste());
+  t.after(() => c.fechar());
+  await c.pedir('initialize', { protocolVersion: '2025-06-18' });
+  const add = await chamarFerramenta(c, 'adicionar_questoes', {
+    materia: 'Lógica', lote: 'Aula 09',
+    questoes: ['q1', 'q2', 'q3'].map((enunciado) => ({ enunciado, alternativas: ['C', 'E'], correta: 0 })),
+  });
+  const [a, b, d] = add.dados.ids;
+  const porIds = await chamarFerramenta(c, 'abrir_questoes_no_app', { ids: [d, a, 9999] });
+  assert.equal(porIds.dados.enviado_ao_app, false);
+  assert.deepEqual(porIds.dados.questoes.map((q) => q.id), [d, a]);
+  assert.deepEqual(porIds.dados.ids_fora_da_rodada, [9999]);
+  const porLote = await chamarFerramenta(c, 'abrir_questoes_no_app', { lote: 'Aula 09', quantas: 2 });
+  assert.deepEqual(porLote.dados.questoes.map((q) => q.id), [a, b]);
+  assert.ok((await chamarFerramenta(c, 'abrir_questoes_no_app', { ids: [9999] })).erro);
+  const lista = await c.pedir('tools/list', {});
+  assert.equal(lista.result.tools.find((f) => f.name === 'abrir_questoes_no_app').annotations.readOnlyHint, true);
 });

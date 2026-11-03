@@ -3,4 +3,5 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('estudos', {
   chamar: (nome, ...args) => ipcRenderer.invoke('api', nome, ...args),
+  aoPedido: (fn) => ipcRenderer.on('pedido', () => fn()),
 });

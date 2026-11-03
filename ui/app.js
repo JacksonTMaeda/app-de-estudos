@@ -1154,5 +1154,24 @@ function recarregarSePuder() {
 window.addEventListener('focus', recarregarSePuder);
 setInterval(recarregarSePuder, 30000);
 
-iniciar();
+// Pedido do Claude pelo MCP (abrir_questoes_no_app): uma rodada com as questões indicadas, na ordem dada.
+// Nunca interrompe rodada ou simulado em andamento; nesse caso avisa e o pedido se perde.
+async function atenderPedido() {
+  const pedido = await chamar('pegarPedido');
+  if (!pedido) return;
+  if (!$('#q-resolver').hidden || !$('#q-simulado').hidden) {
+    alert('O Claude tentou abrir questões, mas há uma rodada ou um simulado em andamento. Encerre e peça de novo.');
+    return;
+  }
+  if (pedido.planoId !== estado.planoId) await carregarPlanos(pedido.planoId);
+  if (pedido.planoId !== estado.planoId) return;
+  const ordem = new Map(pedido.ids.map((id, i) => [id, i]));
+  const lista = (await chamar('questoes', estado.planoId, { ids: pedido.ids, limite: 2000 })).sort((a, b) => ordem.get(a.id) - ordem.get(b.id));
+  if (lista.length === 0) return;
+  mostrar('questoes');
+  iniciarRodada(lista);
+}
+window.estudos.aoPedido(atenderPedido);
+
+iniciar().then(atenderPedido);
 ligarTique();

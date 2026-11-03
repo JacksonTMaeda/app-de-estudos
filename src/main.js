@@ -13,6 +13,7 @@ import * as servico from './servico.js';
 import * as questoes from './questoes.js';
 import { analisarQuestoes } from './analise.js';
 import * as materiais from './materiais.js';
+import { lerPedido } from './pedido.js';
 
 const aqui = dirname(fileURLToPath(import.meta.url));
 const CAMINHO = process.env.ESTUDOS_DB || CAMINHO_PADRAO;
@@ -21,6 +22,8 @@ const db = abrirBanco(CAMINHO);
 copiaDeAbertura(db, CAMINHO, app.getVersion());
 questoes.prepararQuestoes(db);
 materiais.prepararMateriais(db);
+// Perfil à parte (teste com o programa de verdade aberto): trava de cópia única e localStorage próprios.
+if (process.env.ESTUDOS_PERFIL) app.setPath('userData', process.env.ESTUDOS_PERFIL);
 if (process.env.ESTUDOS_CAPTURA) {
   app.disableHardwareAcceleration();
   // A captura nunca mexe no localStorage do programa de verdade (cronômetro em andamento, zoom do leitor).
@@ -30,9 +33,17 @@ if (process.env.ESTUDOS_CAPTURA) {
 // Virada de fase: refaz o ciclo uma vez quando a fase ativa muda (com cópia do banco antes).
 const emDia = (planoId) => sincronizarFase(db, planoId, { copiar: (motivo) => copiarBanco(db, CAMINHO, motivo) });
 
+// Pedido do Claude (pedido.js) que a janela ainda não buscou: vem na abertura ou de uma segunda cópia.
+let pedidoPendente = lerPedido(process.argv);
+
 // Tudo que a janela pode pedir. Pela tela só se apaga estudo (Histórico); o Claude apaga mais pelo MCP.
 const api = {
   versao: () => app.getVersion(),
+  pegarPedido: () => {
+    const pedido = pedidoPendente;
+    pedidoPendente = null;
+    return pedido;
+  },
   planos: () => servico.listarPlanos(db),
   resumo: (planoId) => {
     emDia(planoId);
@@ -194,9 +205,14 @@ function criarJanela() {
 
 // Uma cópia só: abrir de novo traz a janela que já existe para a frente.
 if (!process.env.ESTUDOS_CAPTURA && !app.requestSingleInstanceLock()) app.exit(0);
-app.on('second-instance', () => {
+// Se a segunda cópia trouxe um pedido do Claude, avisa a janela, que busca com pegarPedido.
+app.on('second-instance', (evento, argv) => {
   const [janela] = BrowserWindow.getAllWindows();
-  if (janela) mostrarJanela(janela);
+  const pedido = lerPedido(argv);
+  if (pedido) pedidoPendente = pedido;
+  if (!janela) return;
+  mostrarJanela(janela);
+  if (pedido) janela.webContents.send('pedido');
 });
 
 // Atualização automática pelas releases do GitHub, só no programa instalado (não ao rodar do código).

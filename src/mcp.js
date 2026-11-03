@@ -4,8 +4,11 @@
 // ou refaz algo, guarda uma cópia do banco em <pasta do banco>/copias (as 30 mais novas, junto com as cópias de abertura).
 // Fala o protocolo MCP direto (JSON-RPC, uma mensagem por linha no stdin/stdout); stdout é só do protocolo,
 // qualquer aviso vai para o stderr.
+import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
 import { abrirBanco, CAMINHO_PADRAO, copiarBanco as copiarBancoEm } from './db.js';
 import { calcularPesos, gerarCiclo, OPCOES_PADRAO, opcoesDoCiclo, sincronizarFase } from './ciclo.js';
 import * as fases from './fases.js';
@@ -15,6 +18,7 @@ import * as servico from './servico.js';
 import * as questoes from './questoes.js';
 import { analisarQuestoes } from './analise.js';
 import * as materiais from './materiais.js';
+import { codificarPedido, MAX_IDS } from './pedido.js';
 
 const VERSAO = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 const PROTOCOLOS = ['2025-06-18', '2025-03-26', '2024-11-05'];
@@ -33,6 +37,23 @@ function banco() {
 }
 
 const copiarBanco = (motivo) => copiarBancoEm(banco(), CAMINHO, motivo);
+
+// Abre o programa com um pedido (pedido.js). Instalado, o MCP roda dentro do próprio App De Estudos.exe
+// (ELECTRON_RUN_AS_NODE), então basta chamar o mesmo executável sem essa variável; pelo código, usa o Electron
+// do node_modules. Já aberto, a cópia nova entrega o pedido à janela e fecha sozinha.
+// ESTUDOS_NAO_ABRIR=1 (testes) monta o pedido sem abrir nada.
+function abrirNoApp(pedido) {
+  if (process.env.ESTUDOS_NAO_ABRIR) return false;
+  const raiz = fileURLToPath(new URL('..', import.meta.url));
+  const instalado = /resources[\\/]app[\\/]?$/i.test(raiz);
+  const exe = instalado ? process.execPath : createRequire(import.meta.url)('electron');
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  const filho = spawn(exe, [...(instalado ? [] : [raiz]), codificarPedido(pedido)], { env, detached: true, stdio: 'ignore' });
+  filho.on('error', (erro) => console.error('Abrir o app:', erro.message));
+  filho.unref();
+  return true;
+}
 
 // Virada de fase: o servidor MCP também refaz o ciclo quando a fase muda, porque a pessoa pode usar só o Claude.
 const emDia = (plano) => sincronizarFase(banco(), plano.id, { copiar: copiarBanco });
@@ -777,6 +798,49 @@ Object.assign(FERRAMENTAS, {
     rodar({ plano_id }) {
       const plano = escolherPlano(plano_id);
       return { plano: plano.nome, lotes: questoes.listarLotes(banco(), plano.id) };
+    },
+  },
+
+  abrir_questoes_no_app: {
+    description:
+      'Abre a janela do App De Estudos (ou traz para a frente, se já estiver aberta) direto numa rodada com as questões escolhidas, para a pessoa responder lá. ' +
+      'Escolha por ids (na ordem dada) ou por filtros (lote, matéria, situação). Não grava nada: as respostas entram quando ela responde. ' +
+      'Se houver rodada ou simulado em andamento na janela, o app avisa e não troca.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...PLANO,
+        ids: { type: 'array', items: { type: 'integer', minimum: 1 }, maxItems: MAX_IDS, description: 'Ids das questões, na ordem em que devem aparecer' },
+        lote: { type: 'string', description: 'Nome do lote (veja lotes_de_questoes)' },
+        materia: { type: 'string', description: 'Nome ou parte do nome da matéria' },
+        situacao: { type: 'string', enum: ['todas', 'nao_respondidas', 'erradas'], description: 'Padrão: todas' },
+        quantas: { type: 'integer', minimum: 1, maximum: MAX_IDS, description: 'Máximo de questões na rodada (padrão 20)' },
+        embaralhar: { type: 'boolean', description: 'Padrão false: ordem do lote, ou a dos ids' },
+      },
+    },
+    rodar(args) {
+      const plano = escolherPlano(args.plano_id);
+      const filtros = { situacao: args.situacao ?? 'todas', limite: 2000 };
+      if (args.ids?.length) filtros.ids = args.ids;
+      if (args.lote) filtros.lote = questoes.acharLote(banco(), plano.id, args.lote);
+      if (args.materia) filtros.materiaId = materiaPorNome(plano.id, args.materia).id;
+      let lista = questoes.listarQuestoes(banco(), plano.id, filtros);
+      if (args.ids?.length) {
+        const ordem = new Map(args.ids.map((id, i) => [id, i]));
+        lista.sort((a, b) => ordem.get(a.id) - ordem.get(b.id));
+      }
+      if (args.embaralhar) lista = lista.map((q) => [Math.random(), q]).sort((a, b) => a[0] - b[0]).map(([, q]) => q);
+      lista = lista.slice(0, args.quantas ?? 20);
+      if (lista.length === 0) throw new Error('Nenhuma questão do plano com esses filtros; nada foi aberto.');
+      const faltam = args.ids?.length ? args.ids.filter((id) => !lista.some((q) => q.id === id)) : [];
+      const enviado = abrirNoApp({ tipo: 'questoes', planoId: plano.id, ids: lista.map((q) => q.id) });
+      return {
+        plano: plano.nome,
+        enviado_ao_app: enviado,
+        questoes: lista.map((q) => ({ id: q.id, fonte: q.fonte, tema: q.tema, inicio: q.enunciado.slice(0, 80) })),
+        ...(faltam.length ? { ids_fora_da_rodada: faltam } : {}),
+        aviso: 'A janela só confirma na tela: confira com a pessoa ou por captura de tela se a rodada abriu.',
+      };
     },
   },
 
