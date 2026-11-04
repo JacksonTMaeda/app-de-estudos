@@ -336,7 +336,7 @@ const sessaoDoPlano = (planoId, id) => {
 Object.assign(FERRAMENTAS, {
   registrar_estudo: {
     description:
-      'Lança um estudo no app (aparece no histórico marcado como feito pelo Claude e agenda as revisões). Com conta_no_ciclo, marca como feito o próximo bloco do ciclo se for da mesma matéria (ou, se o próximo for o bloco de questões misturadas, se o estudo for do tipo questoes).',
+      'Lança um estudo no app (aparece no histórico marcado como feito pelo Claude). Teoria agenda as revisões espaçadas; questões não agenda e conclui as revisões pendentes da mesma matéria vencidas até a data do estudo. Com conta_no_ciclo, marca como feito o próximo bloco do ciclo se for da mesma matéria (ou, se o próximo for o bloco de questões misturadas, se o estudo for do tipo questoes).',
     inputSchema: {
       type: 'object',
       properties: { ...PLANO, ...ESTUDO, concluiu_assunto: { type: 'boolean' }, conta_no_ciclo: { type: 'boolean' } },
@@ -352,7 +352,8 @@ Object.assign(FERRAMENTAS, {
       const bate = proximo && (proximo.misto ? dados.tipo === 'questoes' : proximo.materia_id === dados.materia_id);
       if (bate) dados.bloco_id = proximo.id;
       const id = servico.registrarSessao(banco(), plano.id, dados, 'claude');
-      return { registrado: servico.obterSessao(banco(), id), contou_no_ciclo: !!dados.bloco_id };
+      const concluidas = servico.revisoesConcluidasPor(banco(), id);
+      return { registrado: servico.obterSessao(banco(), id), contou_no_ciclo: !!dados.bloco_id, ...(concluidas.length ? { revisoes_concluidas: concluidas } : {}) };
     },
   },
 

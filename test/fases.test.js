@@ -251,6 +251,8 @@ test('banco da 1.0.5 populado abre na 1.1 sem perder nada', async () => {
   }
   velho.exec('INSERT INTO ciclo VALUES (1, 1, 840, 45, 90, 15)');
   for (let b = 0; b < 10; b++) velho.prepare('INSERT INTO bloco VALUES (?, 1, ?, 1, ?, ?, ?)').run(b + 1, (b % 5) + 1, b + 1, b < 5 ? 75 : 90, b < 3 ? 1 : 0);
+  velho.exec("INSERT INTO sessao (id, plano_id, materia_id, inicio, duracao_min, tipo) VALUES (1, 1, 1, '2026-10-01T08:00', 60, 'teoria')");
+  velho.exec("INSERT INTO revisao (sessao_id, data_prevista, estado) VALUES (1, '2026-10-02', 'feita'), (1, '2026-10-08', 'pendente')");
   velho.close();
 
   const db = abrirBanco(caminho);
@@ -264,6 +266,9 @@ test('banco da 1.0.5 populado abre na 1.1 sem perder nada', async () => {
   assert.equal(s.proximoBloco(db, 1).id, 4, 'a fila continua de onde parou');
   assert.equal(sincronizarFase(db, 1), null);
   assert.equal(opcoesDoCiclo(db, 1).total, 840);
+  // 1.4: as revisões antigas ficam como estavam e ganham a coluna de quem concluiu, vazia.
+  assert.deepEqual(db.prepare('SELECT data_prevista, estado, concluida_por FROM revisao ORDER BY id').all().map((r) => ({ ...r })),
+    [{ data_prevista: '2026-10-02', estado: 'feita', concluida_por: null }, { data_prevista: '2026-10-08', estado: 'pendente', concluida_por: null }]);
   db.close();
   // Abrir de novo não migra outra vez.
   const outra = abrirBanco(caminho);

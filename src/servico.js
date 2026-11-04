@@ -105,6 +105,7 @@ export function registrarSessao(db, planoId, dados, origem = 'app') {
         l.material_id, l.material_nome, l.pagina_de, l.pagina_ate);
     const sessaoId = Number(lastInsertRowid);
     agendarRevisoes(db, sessaoId, tipo, inicio);
+    concluirVencidas(db, sessaoId);
     if (dados.bloco_id) db.prepare('UPDATE bloco SET feito = 1 WHERE id = ?').run(dados.bloco_id);
     if (dados.topico_concluido && dados.topico_id) db.prepare('UPDATE topico SET concluido = 1 WHERE id = ?').run(dados.topico_id);
     return sessaoId;
@@ -112,14 +113,36 @@ export function registrarSessao(db, planoId, dados, origem = 'app') {
 }
 
 // Revisões pendentes da sessão, refeitas a partir da data dela. As já feitas ou puladas ficam.
+// Só teoria abre sequência de revisão: questões e revisão revisitam o que já foi estudado (1.4).
 function agendarRevisoes(db, sessaoId, tipo, inicio) {
   db.prepare("DELETE FROM revisao WHERE sessao_id = ? AND estado = 'pendente'").run(sessaoId);
-  if (tipo === 'revisao') return;
+  if (tipo !== 'teoria') return;
   const jaResolvidas = db.prepare("SELECT COUNT(*) n FROM revisao WHERE sessao_id = ?").get(sessaoId).n;
   const inserir = db.prepare('INSERT INTO revisao (sessao_id, data_prevista) VALUES (?, ?)');
   for (const dias of preferencia(db, 'intervalos_revisao').slice(jaResolvidas)) {
     inserir.run(sessaoId, somarDias(inicio.slice(0, 10), dias));
   }
+}
+
+// Questões servem de revisão: todas as revisões pendentes da mesma matéria, vencidas até o dia da
+// sessão, ficam feitas e guardam qual sessão as concluiu. As que ainda não venceram ficam como estão.
+function concluirVencidas(db, sessaoId) {
+  const s = obterSessao(db, sessaoId);
+  if (s.tipo !== 'questoes' || s.materia_id == null) return;
+  db.prepare(
+    `UPDATE revisao SET estado = 'feita', concluida_por = ?
+     WHERE estado = 'pendente' AND data_prevista <= ?
+       AND sessao_id IN (SELECT id FROM sessao WHERE plano_id = ? AND materia_id = ? AND id <> ?)`,
+  ).run(sessaoId, s.inicio.slice(0, 10), s.plano_id, s.materia_id, sessaoId);
+}
+
+// Desfaz o que a sessão de questões concluiu: as revisões voltam a pendentes.
+function devolverRevisoes(db, sessaoId) {
+  db.prepare("UPDATE revisao SET estado = 'pendente', concluida_por = NULL WHERE concluida_por = ?").run(sessaoId);
+}
+
+export function revisoesConcluidasPor(db, sessaoId) {
+  return db.prepare('SELECT id, sessao_id, data_prevista FROM revisao WHERE concluida_por = ? ORDER BY data_prevista, id').all(sessaoId);
 }
 
 export function obterSessao(db, sessaoId) {
@@ -153,13 +176,22 @@ export function editarSessao(db, sessaoId, dados) {
       sessaoId,
     );
     if (inicio !== atual.inicio || tipo !== atual.tipo) agendarRevisoes(db, sessaoId, tipo, inicio);
+    const materiaId = dados.materia_id === undefined ? atual.materia_id : dados.materia_id || null;
+    if (inicio !== atual.inicio || tipo !== atual.tipo || materiaId !== atual.materia_id) {
+      devolverRevisoes(db, sessaoId);
+      concluirVencidas(db, sessaoId);
+    }
   });
   return obterSessao(db, sessaoId);
 }
 
 // Apaga o estudo e as revisões dele. Chamado pela tela do Histórico e pelo Claude (MCP).
+// Se era questões que concluiu revisões de outro estudo, elas voltam a pendentes.
 export function apagarSessao(db, sessaoId) {
-  db.prepare('DELETE FROM sessao WHERE id = ?').run(sessaoId);
+  transacao(db, () => {
+    devolverRevisoes(db, sessaoId);
+    db.prepare('DELETE FROM sessao WHERE id = ?').run(sessaoId);
+  });
 }
 
 export function pularBloco(db, blocoId) {

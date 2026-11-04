@@ -181,6 +181,8 @@ const COLUNAS_NOVAS = {
   // 1.3: o PDF e as páginas estudadas. O nome fica gravado junto porque o material sai da lista
   // quando o arquivo é renomeado ou movido, e o estudo não pode perder o que foi lido.
   sessao: { material_id: 'INTEGER', material_nome: 'TEXT', pagina_de: 'INTEGER', pagina_ate: 'INTEGER' },
+  // 1.4: a sessão de questões que concluiu a revisão vencida. Apagada a sessão, a revisão volta a pendente.
+  revisao: { concluida_por: 'INTEGER' },
 };
 
 export const colunasDe = (db, tabela) => new Set(db.prepare(`PRAGMA table_info(${tabela})`).all().map((c) => c.name));

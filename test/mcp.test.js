@@ -18,6 +18,10 @@ function bancoDeTeste() {
   const { planoId } = importarEdital(db, { nomePlano: 'PCPR', markdown: '### Português (20)\n- [x] Interpretação\n- [ ] Crase\n### Lógica (10)\n- [ ] Conjuntos' });
   gerarCiclo(db, planoId, { total: 180 });
   s.registrarSessao(db, planoId, { materia_id: 1, tipo: 'questoes', duracao_min: 40, acertos: 8, erros: 2, inicio: `${s.dataLocal()}T07:00`, anotacao: 'ok' });
+  // Teoria de anteontem, sem tempo: só ela abre revisões (a de 1 dia já venceu).
+  const anteontem = new Date();
+  anteontem.setDate(anteontem.getDate() - 2);
+  s.registrarSessao(db, planoId, { materia_id: 1, tipo: 'teoria', duracao_min: 0, inicio: `${s.dataLocal(anteontem)}T06:00` });
   prepararQuestoes(db); // o programa faz isto ao abrir
   db.close();
   return caminho;
@@ -125,6 +129,10 @@ test('Claude registra, corrige e apaga estudo, com cópia do banco antes de apag
   assert.equal(reg.erro, undefined, reg.dados);
   assert.equal(reg.dados.registrado.origem, 'claude');
   assert.equal(reg.dados.contou_no_ciclo, true);
+  // Questões servem de revisão: concluem a revisão vencida de Português e não abrem sequência nova.
+  assert.equal(reg.dados.revisoes_concluidas.length, 1);
+  const pendentes = await chamarFerramenta(c, 'revisoes_pendentes', { ate: '2099-01-01' });
+  assert.equal(pendentes.dados.total, 4);
   const id = reg.dados.registrado.id;
 
   const assuntos = await chamarFerramenta(c, 'assuntos_da_materia', { materia: 'Português' });
@@ -137,6 +145,8 @@ test('Claude registra, corrige e apaga estudo, com cópia do banco antes de apag
   assert.ok(existsSync(apag.dados.copia_do_banco));
   const hist = await chamarFerramenta(c, 'historico_sessoes');
   assert.ok(!hist.dados.sessoes.some((x) => x.id === id));
+  const devolvidas = await chamarFerramenta(c, 'revisoes_pendentes', { ate: '2099-01-01' });
+  assert.equal(devolvidas.dados.total, 5);
 
   const ruim = await chamarFerramenta(c, 'registrar_estudo', { materia: 'Química', tipo: 'teoria', minutos: 10 });
   assert.ok(ruim.erro && /não encontrada/.test(ruim.dados));

@@ -80,7 +80,7 @@ test('resumo soma tempo, questões, edital e constância', () => {
 
 test('editar corrige os números e move as revisões pendentes junto com a data', () => {
   const { db, planoId } = novoPlano();
-  const id = s.registrarSessao(db, planoId, { tipo: 'questoes', duracao_min: 30, acertos: 5, erros: 5, inicio: '2026-10-17T08:00' });
+  const id = s.registrarSessao(db, planoId, { tipo: 'teoria', duracao_min: 30, acertos: 5, erros: 5, inicio: '2026-10-17T08:00' });
   s.concluirRevisao(db, s.revisoesDoDia(db, planoId, '2026-10-18')[0].id);
   const nova = s.editarSessao(db, id, { duracao_min: 45, acertos: 8, erros: 2, inicio: '2026-10-20T08:00' });
   assert.deepEqual([nova.duracao_min, nova.acertos, nova.erros, nova.inicio], [45, 8, 2, '2026-10-20T08:00']);
@@ -93,6 +93,85 @@ test('editar corrige os números e move as revisões pendentes junto com a data'
     { data_prevista: '2026-12-19', estado: 'pendente' },
     { data_prevista: '2027-02-17', estado: 'pendente' },
   ]);
+});
+
+const materiaId = (db, nome) => db.prepare('SELECT id FROM materia WHERE nome = ?').get(nome).id;
+const revisoesDe = (db, sessaoId) =>
+  db.prepare('SELECT data_prevista, estado, concluida_por FROM revisao WHERE sessao_id = ? ORDER BY id').all(sessaoId).map((r) => ({ ...r }));
+
+test('rodada de questões que serve de revisão conclui a vencida da matéria e não cria revisão nova', () => {
+  const { db, planoId } = novoPlano();
+  const pt = materiaId(db, 'Português');
+  const teoria = s.registrarSessao(db, planoId, { materia_id: pt, tipo: 'teoria', duracao_min: 60, inicio: '2026-11-02T13:00' });
+  const outra = s.registrarSessao(db, planoId, { materia_id: materiaId(db, 'Lógica'), tipo: 'teoria', duracao_min: 30, inicio: '2026-11-02T15:00' });
+  // Rodada do app no dia seguinte: a revisão de 1 dia de Português venceu.
+  const rodada = s.registrarSessao(db, planoId, { materia_id: pt, tipo: 'questoes', duracao_min: 20, acertos: 9, erros: 1, inicio: '2026-11-03T21:00' });
+  assert.equal(revisoesDe(db, rodada).length, 0);
+  assert.deepEqual(revisoesDe(db, teoria).map((r) => [r.data_prevista, r.estado, r.concluida_por]), [
+    ['2026-11-03', 'feita', rodada],
+    ['2026-11-09', 'pendente', null],
+    ['2026-12-02', 'pendente', null],
+    ['2027-01-01', 'pendente', null],
+    ['2027-03-02', 'pendente', null],
+  ]);
+  // A outra matéria não é tocada.
+  assert.equal(revisoesDe(db, outra)[0].estado, 'pendente');
+  assert.deepEqual(s.revisoesConcluidasPor(db, rodada).map((r) => r.data_prevista), ['2026-11-03']);
+  assert.deepEqual(s.revisoesDoDia(db, planoId, '2026-11-03').map((r) => r.materia), ['Lógica']);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM revisao').get().n, 10);
+});
+
+test('rodadas seguidas sem revisão vencida não criam revisão; atrasadas da matéria são concluídas juntas', () => {
+  const { db, planoId } = novoPlano();
+  const pt = materiaId(db, 'Português');
+  const a = s.registrarSessao(db, planoId, { materia_id: pt, tipo: 'teoria', duracao_min: 60, inicio: '2026-10-01T08:00' });
+  const b = s.registrarSessao(db, planoId, { materia_id: pt, tipo: 'teoria', duracao_min: 60, inicio: '2026-10-05T08:00' });
+  const r1 = s.registrarSessao(db, planoId, { materia_id: pt, tipo: 'questoes', duracao_min: 5, acertos: 1, inicio: '2026-10-09T21:00' });
+  for (const h of ['21:10', '21:20', '21:30']) {
+    s.registrarSessao(db, planoId, { materia_id: pt, tipo: 'questoes', duracao_min: 2, acertos: 1, inicio: `2026-10-09T${h}` });
+  }
+  // As vencidas até 09-10 (1 dia de cada estudo e 7 dias do primeiro) saem com a primeira rodada.
+  assert.deepEqual(s.revisoesConcluidasPor(db, r1).map((r) => [r.sessao_id, r.data_prevista]), [[a, '2026-10-02'], [b, '2026-10-06'], [a, '2026-10-08']]);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM revisao r JOIN sessao s ON s.id = r.sessao_id WHERE s.tipo = 'questoes'").get().n, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM revisao').get().n, 10);
+  assert.equal(s.revisoesDoDia(db, planoId, '2026-10-09').length, 0);
+});
+
+test('rodada sem matéria (misturada sem matéria) não conclui nem agenda nada', () => {
+  const { db, planoId } = novoPlano();
+  s.registrarSessao(db, planoId, { materia_id: materiaId(db, 'Português'), tipo: 'teoria', duracao_min: 60, inicio: '2026-11-02T13:00' });
+  s.registrarSessao(db, planoId, { tipo: 'questoes', duracao_min: 10, acertos: 3, inicio: '2026-11-03T21:00' });
+  assert.equal(s.revisoesDoDia(db, planoId, '2026-11-03').length, 1);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM revisao').get().n, 5);
+});
+
+test('apagar a rodada devolve a revisão que ela concluiu', () => {
+  const { db, planoId } = novoPlano();
+  const pt = materiaId(db, 'Português');
+  s.registrarSessao(db, planoId, { materia_id: pt, tipo: 'teoria', duracao_min: 60, inicio: '2026-11-02T13:00' });
+  const rodada = s.registrarSessao(db, planoId, { materia_id: pt, tipo: 'questoes', duracao_min: 20, acertos: 9, erros: 1, inicio: '2026-11-03T21:00' });
+  assert.equal(s.revisoesDoDia(db, planoId, '2026-11-03').length, 0);
+  s.apagarSessao(db, rodada);
+  const volta = s.revisoesDoDia(db, planoId, '2026-11-03');
+  assert.deepEqual(volta.map((r) => r.data_prevista), ['2026-11-03']);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM revisao WHERE concluida_por IS NOT NULL').get().n, 0);
+});
+
+test('corrigir a data ou a matéria da rodada refaz o que ela concluiu', () => {
+  const { db, planoId } = novoPlano();
+  const pt = materiaId(db, 'Português');
+  const lg = materiaId(db, 'Lógica');
+  s.registrarSessao(db, planoId, { materia_id: pt, tipo: 'teoria', duracao_min: 60, inicio: '2026-11-02T13:00' });
+  s.registrarSessao(db, planoId, { materia_id: lg, tipo: 'teoria', duracao_min: 60, inicio: '2026-11-02T15:00' });
+  const rodada = s.registrarSessao(db, planoId, { materia_id: pt, tipo: 'questoes', duracao_min: 20, acertos: 9, inicio: '2026-11-03T21:00' });
+  // Na verdade foi no mesmo dia da teoria: nada tinha vencido ainda.
+  s.editarSessao(db, rodada, { inicio: '2026-11-02T21:00' });
+  assert.equal(s.revisoesConcluidasPor(db, rodada).length, 0);
+  assert.equal(s.revisoesDoDia(db, planoId, '2026-11-03').length, 2);
+  // Volta para 03-11, mas era de Lógica.
+  s.editarSessao(db, rodada, { inicio: '2026-11-03T21:00', materia_id: lg });
+  assert.deepEqual(s.revisoesDoDia(db, planoId, '2026-11-03').map((r) => r.materia), ['Português']);
+  assert.equal(revisoesDe(db, rodada).length, 0);
 });
 
 test('editar para revisão tira as revisões pendentes', () => {
