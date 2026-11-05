@@ -189,6 +189,51 @@ test('Claude acrescenta e apaga questões, refaz o ciclo e mexe em plano', async
   assert.equal((await chamarFerramenta(c, 'ver_plano')).dados.planos.length, 1);
 });
 
+test('Claude cria e consulta flashcards e mapas, e apagar guarda cópia do banco', async (t) => {
+  const c = conversar(bancoDeTeste());
+  t.after(() => c.fechar());
+  await c.pedir('initialize', { protocolVersion: '2025-06-18' });
+  const lista = await c.pedir('tools/list', {});
+  const porNome = Object.fromEntries(lista.result.tools.map((x) => [x.name, x.annotations]));
+  for (const apaga of ['apagar_flashcards', 'apagar_mapa_mental']) assert.equal(porNome[apaga].destructiveHint, true, apaga);
+  for (const grava of ['adicionar_flashcards', 'salvar_mapa_mental']) assert.equal(porNome[grava].readOnlyHint, false, grava);
+  for (const le of ['flashcards', 'mapas_mentais']) assert.equal(porNome[le].readOnlyHint, true, le);
+
+  const add = await chamarFerramenta(c, 'adicionar_flashcards', {
+    baralho: 'Aula 1', materia: 'Lógica', pagina_de: 1, pagina_ate: 5,
+    cartoes: [{ frente: 'p e q', verso: 'V só se ambos V' }, { frente: 'p ou q', verso: 'F só se ambos F' }],
+  });
+  assert.equal(add.dados.adicionados, 2, add.dados);
+  assert.ok((await chamarFerramenta(c, 'adicionar_flashcards', { baralho: 'X', cartoes: [{ frente: 'a', verso: '' }] })).erro);
+  const baralhos = await chamarFerramenta(c, 'flashcards');
+  assert.deepEqual(baralhos.dados.baralhos.map((b) => [b.baralho, b.materia, b.cartoes]), [['Aula 1', 'Lógica', 2]]);
+  assert.equal((await chamarFerramenta(c, 'flashcards', { baralho: 'Aula 1' })).dados.cartoes.length, 2);
+  const ambos = await chamarFerramenta(c, 'apagar_flashcards', { ids: [1], baralho: 'Aula 1' });
+  assert.ok(ambos.erro);
+  const porId = await chamarFerramenta(c, 'apagar_flashcards', { ids: add.dados.ids.slice(0, 1) });
+  assert.equal(porId.dados.apagados, 1);
+  assert.ok(existsSync(porId.dados.copia_do_banco));
+  const inteiro = await chamarFerramenta(c, 'apagar_flashcards', { baralho: 'Aula 1' });
+  assert.equal(inteiro.dados.apagados, 1);
+  assert.ok(existsSync(inteiro.dados.copia_do_banco));
+
+  const arvore = { texto: 'Conectivos', filhos: [{ texto: 'E', nota: 'conjunção' }, { texto: 'Ou' }] };
+  const mapa = await chamarFerramenta(c, 'salvar_mapa_mental', { titulo: 'Conectivos', materia: 'Lógica', arvore });
+  assert.equal(mapa.erro, undefined, mapa.dados);
+  assert.ok((await chamarFerramenta(c, 'salvar_mapa_mental', { titulo: 'Vazio', arvore: { texto: '' } })).erro);
+  const mapas = await chamarFerramenta(c, 'mapas_mentais');
+  assert.deepEqual(mapas.dados.mapas.map((m) => [m.titulo, m.materia]), [['Conectivos', 'Lógica']]);
+  const lido = await chamarFerramenta(c, 'mapas_mentais', { id: mapa.dados.id });
+  assert.equal(lido.dados.arvore.filhos[0].nota, 'conjunção');
+  const novo = await chamarFerramenta(c, 'salvar_mapa_mental', { id: mapa.dados.id, titulo: 'Conectivos 2', arvore: { texto: 'Só a raiz' } });
+  assert.equal(novo.dados.substituido, true);
+  assert.equal((await chamarFerramenta(c, 'mapas_mentais')).dados.mapas.length, 1);
+  const apagado = await chamarFerramenta(c, 'apagar_mapa_mental', { id: mapa.dados.id });
+  assert.ok(existsSync(apagado.dados.copia_do_banco));
+  assert.equal((await chamarFerramenta(c, 'mapas_mentais')).dados.mapas.length, 0);
+  assert.ok((await chamarFerramenta(c, 'apagar_mapa_mental', { id: 999 })).erro);
+});
+
 test('Claude vê os materiais, marca a página, liga à matéria e relê a pasta', async (t) => {
   const caminho = bancoDeTeste();
   const raiz = mkdtempSync(join(tmpdir(), 'pdfs-'));

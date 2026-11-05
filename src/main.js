@@ -13,6 +13,7 @@ import * as servico from './servico.js';
 import * as questoes from './questoes.js';
 import { analisarQuestoes } from './analise.js';
 import * as materiais from './materiais.js';
+import * as fixacao from './fixacao.js';
 import { lerPedido } from './pedido.js';
 
 const aqui = dirname(fileURLToPath(import.meta.url));
@@ -22,6 +23,7 @@ const db = abrirBanco(CAMINHO);
 copiaDeAbertura(db, CAMINHO, app.getVersion());
 questoes.prepararQuestoes(db);
 materiais.prepararMateriais(db);
+fixacao.prepararFixacao(db);
 // Perfil à parte (teste com o programa de verdade aberto): trava de cópia única e localStorage próprios.
 if (process.env.ESTUDOS_PERFIL) app.setPath('userData', process.env.ESTUDOS_PERFIL);
 if (process.env.ESTUDOS_CAPTURA) {
@@ -92,6 +94,11 @@ const api = {
     if (escolha.canceled || escolha.filePaths.length === 0) return null;
     return questoes.importarPasta(db, planoId, escolha.filePaths[0]);
   },
+  baralhos: (planoId, filtros) => fixacao.listarBaralhos(db, planoId, filtros),
+  flashcards: (planoId, filtros) => fixacao.listarFlashcards(db, planoId, filtros),
+  marcarVisto: (id) => fixacao.marcarVisto(db, id),
+  mapas: (planoId, filtros) => fixacao.listarMapas(db, planoId, filtros),
+  lerMapa: (id) => fixacao.lerMapa(db, id),
   materiais: (planoId) => ({
     pasta: materiais.pastaDoPlano(db, planoId),
     lista: materiais.listarMateriais(db, planoId),

@@ -1,5 +1,6 @@
 // Telas do programa. Todo dado vem do processo principal por window.estudos.chamar.
 import { abrirLeitor, fecharLeitor } from './leitor.js';
+import { iniciarFixacao } from './fixacao.js';
 import { novoRelogio, pausar, continuar, msCorridos } from './pausa.js';
 
 const chamar = (nome, ...args) => window.estudos.chamar(nome, ...args);
@@ -35,6 +36,8 @@ const diasAte = (iso) => {
 };
 const nomeLote = (lote) => lote.replace(/^claude\//, '');
 const nomeMateria = (id) => estado.materias.find((m) => m.id === id)?.nome ?? 'Sem matéria';
+
+const { telaFlashcards, telaMapas } = iniciarFixacao({ chamar, estado, $ });
 
 // ---------- navegação ----------
 document.querySelectorAll('nav button').forEach((b) =>
@@ -96,6 +99,8 @@ async function atualizar() {
   if (estado.tela === 'inicio') await telaInicio();
   if (estado.tela === 'ciclo') await telaCiclo();
   if (estado.tela === 'questoes') await telaQuestoes();
+  if (estado.tela === 'flashcards') await telaFlashcards();
+  if (estado.tela === 'mapas') await telaMapas();
   if (estado.tela === 'analise') {
     await causas();
     await telaAnalise();

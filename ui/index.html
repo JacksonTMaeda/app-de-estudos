@@ -14,6 +14,8 @@
       <button data-tela="inicio" class="ativo">🏠 Início</button>
       <button data-tela="ciclo">🔁 Ciclo</button>
       <button data-tela="questoes">✍️ Questões</button>
+      <button data-tela="flashcards">🃏 Flashcards</button>
+      <button data-tela="mapas">🧠 Mapas</button>
       <button data-tela="analise">📊 Análise</button>
       <button data-tela="materiais">📄 Materiais</button>
       <button data-tela="edital">📋 Edital</button>
@@ -180,6 +182,52 @@
           <button id="sim-seguinte" class="secundario">Próxima</button>
           <button id="sim-entregar" class="primario">Entregar</button>
         </div>
+      </div>
+    </section>
+
+    <section id="tela-flashcards" class="tela" hidden>
+      <div class="cartao" id="fc-filtros">
+        <div class="cabeca"><h2>Flashcards</h2><span class="sutil">revise quando quiser, sem agenda</span></div>
+        <div class="filtros">
+          <label>Matéria <select id="fc-materia"></select></label>
+          <label>Baralho <select id="fc-baralho"></select></label>
+          <button id="fc-embaralhar" class="secundario">Embaralhar</button>
+        </div>
+      </div>
+      <p id="fc-vazio" class="sutil" hidden>Ainda não há flashcards. Eles são criados pelo Claude a partir do que você já leu.</p>
+      <div id="fc-area" hidden>
+        <div id="fc-cartao" class="fc-cartao" tabindex="0" role="button" aria-label="Virar o cartão">
+          <span id="fc-lado" class="fc-lado"></span>
+          <div id="fc-texto" class="fc-texto"></div>
+        </div>
+        <div class="fc-controles">
+          <button id="fc-anterior" class="secundario">Anterior</button>
+          <span id="fc-contador" class="sutil"></span>
+          <button id="fc-proximo" class="primario">Próximo</button>
+        </div>
+        <p class="sutil fc-dica">Clique no cartão ou aperte Espaço para virar. Setas do teclado trocam de cartão.</p>
+      </div>
+    </section>
+
+    <section id="tela-mapas" class="tela" hidden>
+      <div id="mp-lista-area">
+        <div class="cartao" id="mp-cabeca">
+          <div class="cabeca"><h2>Mapas mentais</h2></div>
+          <div class="filtros"><label>Matéria <select id="mp-materia"></select></label></div>
+        </div>
+        <p id="mp-vazio" class="sutil" hidden>Ainda não há mapas mentais. Eles são criados pelo Claude a partir do que você já leu.</p>
+        <div id="mp-lista" class="mp-lista"></div>
+      </div>
+      <div id="mp-mapa-area" hidden>
+        <div class="cartao mp-barra">
+          <div><h2 id="mp-titulo"></h2><p id="mp-sub" class="sutil"></p></div>
+          <div class="acoes">
+            <button id="mp-expandir" class="secundario">Expandir tudo</button>
+            <button id="mp-recolher" class="secundario">Recolher tudo</button>
+            <button id="mp-voltar" class="primario">Voltar</button>
+          </div>
+        </div>
+        <div id="mp-rolagem" class="mp-rolagem"><div id="mp-arvore" class="mp-arvore"></div></div>
       </div>
     </section>
 

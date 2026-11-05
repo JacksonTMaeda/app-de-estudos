@@ -18,6 +18,7 @@ import * as servico from './servico.js';
 import * as questoes from './questoes.js';
 import { analisarQuestoes } from './analise.js';
 import * as materiais from './materiais.js';
+import * as fixacao from './fixacao.js';
 import { codificarPedido, MAX_IDS } from './pedido.js';
 
 const VERSAO = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
@@ -33,6 +34,7 @@ function banco() {
   db = abrirBanco(CAMINHO);
   questoes.prepararQuestoes(db);
   materiais.prepararMateriais(db);
+  fixacao.prepararFixacao(db);
   return db;
 }
 
@@ -524,6 +526,159 @@ Object.assign(FERRAMENTAS, {
       const copia = copiarBanco('antes de apagar questao');
       questoes.apagarQuestao(banco(), q.id);
       return { apagada: q, copia_do_banco: copia };
+    },
+  },
+
+  adicionar_flashcards: {
+    description:
+      'Cria um baralho de flashcards no app, para a pessoa revisar na aba Flashcards quando quiser (sem agenda, sem certo ou errado). ' +
+      'Cada cartão deve ser curto, com uma ideia só, tirado do que a pessoa já leu (use material_id e páginas para dizer de onde veio). ' +
+      'O baralho é identificado pelo nome: usar o mesmo nome de novo acrescenta cartões a ele.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...PLANO,
+        baralho: { type: 'string', description: 'Nome do baralho (ex.: "Aula 09 Crimes de Trânsito p. 9 a 22")' },
+        materia: { ...ESTUDO.materia, description: 'Nome ou parte do nome da matéria (opcional)' },
+        material_id: ESTUDO.material_id,
+        pagina_de: ESTUDO.pagina_de,
+        pagina_ate: ESTUDO.pagina_ate,
+        cartoes: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            properties: { frente: { type: 'string', description: 'Pergunta ou termo, curto' }, verso: { type: 'string', description: 'Resposta, curta' } },
+            required: ['frente', 'verso'],
+          },
+        },
+      },
+      required: ['baralho', 'cartoes'],
+    },
+    escreve: true,
+    rodar(args) {
+      const plano = escolherPlano(args.plano_id);
+      const m = args.materia ? materiaPorNome(plano.id, args.materia) : null;
+      const ids = fixacao.adicionarFlashcards(banco(), plano.id, {
+        baralho: args.baralho, materiaId: m?.id ?? null, materialId: args.material_id || null,
+        paginaDe: args.pagina_de, paginaAte: args.pagina_ate, cartoes: args.cartoes,
+      });
+      return { baralho: args.baralho, materia: m?.nome ?? null, adicionados: ids.length, ids };
+    },
+  },
+
+  flashcards: {
+    description:
+      'Consulta os flashcards do app. Sem baralho e sem matéria: lista os baralhos (nome, matéria, quantidade, data). ' +
+      'Com baralho ou matéria: lista os cartões (id, frente, verso, quantas vezes foram vistos).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...PLANO,
+        baralho: { type: 'string', description: 'Nome exato do baralho' },
+        materia: { ...ESTUDO.materia, description: 'Nome ou parte do nome da matéria' },
+      },
+    },
+    rodar({ plano_id, baralho, materia }) {
+      const plano = escolherPlano(plano_id);
+      const m = materia ? materiaPorNome(plano.id, materia) : null;
+      if (!baralho && !m) return { plano: plano.nome, baralhos: fixacao.listarBaralhos(banco(), plano.id) };
+      const cartoes = fixacao.listarFlashcards(banco(), plano.id, { materiaId: m?.id ?? null, baralho: baralho ?? null, limite: 1000 });
+      return { plano: plano.nome, total: cartoes.length, cartoes };
+    },
+  },
+
+  apagar_flashcards: {
+    description: 'Apaga flashcards: por ids (lista) ou um baralho inteiro pelo nome. Guarda uma cópia do banco antes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...PLANO,
+        ids: { type: 'array', items: { type: 'integer' }, minItems: 1, description: 'Ids dos cartões (ferramenta flashcards)' },
+        baralho: { type: 'string', description: 'Nome exato do baralho a apagar por inteiro' },
+      },
+    },
+    escreve: true,
+    apaga: true,
+    rodar({ plano_id, ids, baralho }) {
+      if ((ids?.length ? 1 : 0) + (baralho ? 1 : 0) !== 1) throw new Error('Informe ids ou baralho (só um dos dois).');
+      const plano = escolherPlano(plano_id);
+      const copia = copiarBanco('antes de apagar flashcards');
+      if (baralho) return { apagados: fixacao.apagarBaralho(banco(), plano.id, baralho), baralho, copia_do_banco: copia };
+      const apagados = ids.reduce((n, id) => n + fixacao.apagarFlashcard(banco(), id), 0);
+      return { apagados, copia_do_banco: copia };
+    },
+  },
+
+  salvar_mapa_mental: {
+    description:
+      'Salva um mapa mental no app, que a pessoa abre na aba Mapas (árvore da esquerda para a direita, nós que recolhem). ' +
+      'A árvore é {texto, nota?, filhos?: [mesma forma]}: no máximo 6 níveis, 300 nós, texto de até 200 caracteres e nota de até 500. ' +
+      'Nós curtos (palavra-chave ou frase breve); a nota aparece como dica ao passar o mouse. Com id, substitui aquele mapa; sem id, cria um novo.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...PLANO,
+        id: { type: 'integer', description: 'Id de um mapa existente, para substituí-lo (opcional)' },
+        titulo: { type: 'string' },
+        materia: { ...ESTUDO.materia, description: 'Nome ou parte do nome da matéria (opcional)' },
+        material_id: ESTUDO.material_id,
+        pagina_de: ESTUDO.pagina_de,
+        pagina_ate: ESTUDO.pagina_ate,
+        arvore: {
+          type: 'object',
+          description: 'Raiz do mapa: {"texto": "...", "nota": "opcional", "filhos": [{"texto": "...", "filhos": []}]}',
+          properties: {
+            texto: { type: 'string', maxLength: 200 },
+            nota: { type: 'string', maxLength: 500 },
+            filhos: { type: 'array', items: { type: 'object', description: 'Mesma forma do nó pai' } },
+          },
+          required: ['texto'],
+        },
+      },
+      required: ['titulo', 'arvore'],
+    },
+    escreve: true,
+    rodar(args) {
+      const plano = escolherPlano(args.plano_id);
+      const m = args.materia ? materiaPorNome(plano.id, args.materia) : null;
+      const id = fixacao.salvarMapa(banco(), plano.id, {
+        id: args.id ?? null, titulo: args.titulo, materiaId: m?.id ?? null, materialId: args.material_id || null,
+        paginaDe: args.pagina_de, paginaAte: args.pagina_ate, arvore: args.arvore,
+      });
+      return { id, titulo: args.titulo, materia: m?.nome ?? null, substituido: args.id != null };
+    },
+  },
+
+  mapas_mentais: {
+    description: 'Consulta os mapas mentais do app. Sem id: lista (título, matéria, páginas, data). Com id: devolve o mapa com a árvore completa.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...PLANO,
+        id: { type: 'integer', description: 'Id do mapa, para ver a árvore' },
+        materia: { ...ESTUDO.materia, description: 'Nome ou parte do nome da matéria (filtra a lista)' },
+      },
+    },
+    rodar({ plano_id, id, materia }) {
+      const plano = escolherPlano(plano_id);
+      if (id != null) return fixacao.lerMapa(banco(), id);
+      const m = materia ? materiaPorNome(plano.id, materia) : null;
+      return { plano: plano.nome, mapas: fixacao.listarMapas(banco(), plano.id, { materiaId: m?.id ?? null }) };
+    },
+  },
+
+  apagar_mapa_mental: {
+    description: 'Apaga um mapa mental pelo id (ferramenta mapas_mentais). Guarda uma cópia do banco antes.',
+    inputSchema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] },
+    escreve: true,
+    apaga: true,
+    rodar({ id }) {
+      const mapa = banco().prepare('SELECT id, titulo FROM mapa_mental WHERE id = ?').get(Number(id));
+      if (!mapa) throw new Error(`Mapa ${id} não existe.`);
+      const copia = copiarBanco('antes de apagar mapa mental');
+      fixacao.apagarMapa(banco(), mapa.id);
+      return { apagado: mapa, copia_do_banco: copia };
     },
   },
 

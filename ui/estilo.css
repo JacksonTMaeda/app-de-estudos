@@ -360,3 +360,50 @@ button.m-cartao:hover { border-color: var(--primaria); }
 .barra-leitor { flex-wrap: wrap; row-gap: 6px; }
 .l-titulo { min-width: 180px; }
 .l-titulo span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- flashcards ---------- */
+#tela-flashcards > .cartao, #tela-mapas .cartao { margin-bottom: 16px; }
+.fc-cartao {
+  display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 14px;
+  min-height: 320px; padding: 32px; text-align: center; cursor: pointer; user-select: none;
+  background: var(--cartao); border: 2px solid var(--borda); border-radius: 16px; box-shadow: var(--sombra);
+}
+.fc-cartao:hover, .fc-cartao:focus-visible { border-color: var(--primaria); outline: none; }
+.fc-cartao.virado { background: var(--primaria-clara); border-color: var(--primaria); }
+.fc-lado { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--sutil); }
+.fc-texto { font-size: 24px; line-height: 1.4; max-width: 760px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fc-controles { display: flex; justify-content: center; align-items: center; gap: 24px; margin-top: 16px; }
+.fc-controles button:disabled { opacity: 0.4; cursor: default; }
+.fc-dica { text-align: center; margin-top: 10px; }
+
+/* ---------- mapas mentais ---------- */
+.mp-lista { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.mp-lista .mp-item-lista { display: flex; flex-direction: column; gap: 4px; text-align: left; cursor: pointer; margin: 0; }
+.mp-item-lista:hover { border-color: var(--primaria); }
+#tela-mapas .mp-barra { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.mp-barra .acoes { display: flex; gap: 8px; }
+.mp-rolagem { overflow: auto; max-height: calc(100vh - 190px); padding: 20px; background: var(--cartao); border: 1px solid var(--borda); border-radius: 12px; }
+.mp-arvore { display: inline-block; min-width: 100%; }
+.mp-item { display: flex; align-items: center; position: relative; }
+.mp-filhos { display: flex; flex-direction: column; margin-left: 28px; position: relative; }
+.mp-filhos::before { content: ""; position: absolute; left: -28px; top: 50%; width: 28px; border-top: 2px solid var(--cor, var(--primaria)); }
+.mp-filhos > .mp-item { padding: 4px 0 4px 28px; }
+.mp-filhos > .mp-item::before { content: ""; position: absolute; left: 0; top: 50%; width: 28px; border-top: 2px solid var(--cor); }
+.mp-filhos > .mp-item::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; border-left: 2px solid var(--cor); }
+.mp-filhos > .mp-item:first-child::after { top: 50%; }
+.mp-filhos > .mp-item:last-child::after { bottom: 50%; }
+.mp-filhos > .mp-item:only-child::after { display: none; }
+.mp-item.recolhido > .mp-filhos { display: none; }
+.mp-linha { display: flex; align-items: center; }
+.mp-caixa {
+  display: flex; align-items: center; gap: 8px; max-width: 280px; padding: 7px 12px; text-align: left;
+  border: 2px solid var(--cor); border-radius: 10px; cursor: default; font-size: 13px; line-height: 1.35;
+  color: var(--texto); background: color-mix(in srgb, var(--cor) 12%, var(--cartao));
+}
+.mp-item.tem-filhos > .mp-linha > .mp-caixa { cursor: pointer; }
+.mp-caixa.nivel-0 { background: var(--primaria); border-color: var(--primaria); color: #fff; font-weight: 700; font-size: 15px; }
+.mp-caixa.nivel-1 { background: var(--cor); color: #fff; font-weight: 600; }
+.mp-caixa.nivel-2 { background: color-mix(in srgb, var(--cor) 22%, var(--cartao)); }
+.mp-caixa.nivel-3 { background: color-mix(in srgb, var(--cor) 10%, var(--cartao)); }
+.mp-caixa:focus-visible { outline: 2px solid var(--primaria); outline-offset: 2px; }
+.mp-marca { font-size: 11px; font-weight: 700; opacity: 0.85; white-space: nowrap; }
