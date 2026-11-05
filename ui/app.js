@@ -1,5 +1,6 @@
 // Telas do programa. Todo dado vem do processo principal por window.estudos.chamar.
 import { abrirLeitor, fecharLeitor } from './leitor.js';
+import { novoRelogio, pausar, continuar, msCorridos } from './pausa.js';
 
 const chamar = (nome, ...args) => window.estudos.chamar(nome, ...args);
 const $ = (sel) => document.querySelector(sel);
@@ -535,7 +536,8 @@ function telaEdital() {
 
 // ---------- questões ----------
 const LETRAS = ['A', 'B', 'C', 'D', 'E', 'F'];
-const rodada = { lista: [], i: 0, escolhida: null, respondida: false, respostas: [], inicio: 0 };
+// relogio: o da rodada inteira; relogioQuestao: o da questão na tela. A pausa para os dois.
+const rodada = { lista: [], i: 0, escolhida: null, respondida: false, respostas: [], relogio: null, relogioQuestao: null };
 
 // O HTML das questões vem dos quizzes do cofre: tira script, estilo, iframe e atributos de evento.
 function limparHtml(html) {
@@ -616,7 +618,8 @@ $('#q-comecar').addEventListener('click', async () => {
 
 // blocoId: a rodada é o bloco de questões misturadas do ciclo; ao encerrar com resposta, o bloco conta como feito.
 function iniciarRodada(lista, { blocoId = null } = {}) {
-  Object.assign(rodada, { lista, i: 0, respostas: [], inicio: Date.now(), blocoId });
+  Object.assign(rodada, { lista, i: 0, respostas: [], relogio: novoRelogio(), blocoId });
+  desenharPausaRodada();
   $('#q-escolha').hidden = true;
   $('#q-fim').hidden = true;
   $('#q-resolver').hidden = false;
@@ -627,7 +630,8 @@ function mostrarQuestao() {
   const q = rodada.lista[rodada.i];
   rodada.escolhida = null;
   rodada.respondida = false;
-  rodada.abertaEm = Date.now();
+  rodada.relogioQuestao = novoRelogio();
+  if (rodadaPausada()) pausar(rodada.relogioQuestao);
   const acertos = rodada.respostas.filter((r) => r.acertou).length;
   $('#q-posicao').textContent = `Questão ${rodada.i + 1} de ${rodada.lista.length}`;
   $('#q-placar').textContent = rodada.respostas.length ? `${acertos} de ${rodada.respostas.length} certas` : '';
@@ -656,7 +660,7 @@ function escolher(i) {
 
 async function responder() {
   const q = rodada.lista[rodada.i];
-  const segundos = (Date.now() - rodada.abertaEm) / 1000;
+  const segundos = msCorridos(rodada.relogioQuestao) / 1000;
   const { respostaId, acertou, correta } = await chamar('responderQuestao', q.id, rodada.escolhida, segundos);
   rodada.respondida = true;
   rodada.respostas.push({ materia_id: q.materia_id, acertou });
@@ -684,7 +688,27 @@ async function responder() {
   $('#q-placar').textContent = `${acertos} de ${rodada.respostas.length} certas`;
 }
 
+// Pausa da rodada: para o tempo da rodada e o da questão, e esconde a questão até continuar.
+function rodadaPausada() {
+  return rodada.relogio?.pausadoEm != null;
+}
+function desenharPausaRodada() {
+  const p = rodadaPausada();
+  $('#q-resolver').classList.toggle('pausada', p);
+  $('#q-pausar').textContent = p ? 'Continuar' : 'Pausar';
+}
+function alternarPausaRodada() {
+  const fn = rodadaPausada() ? continuar : pausar;
+  const agora = Date.now();
+  fn(rodada.relogio, agora);
+  fn(rodada.relogioQuestao, agora);
+  desenharPausaRodada();
+}
+$('#q-pausar').addEventListener('click', alternarPausaRodada);
+$('#q-continuar').addEventListener('click', alternarPausaRodada);
+
 $('#q-acao').addEventListener('click', () => {
+  if (rodadaPausada()) return;
   if (!rodada.respondida) return responder();
   if (rodada.i + 1 < rodada.lista.length) {
     rodada.i++;
@@ -703,6 +727,7 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if ($('#q-resolver').hidden || dialogo.open || e.ctrlKey || e.altKey) return;
+  if (rodadaPausada()) return;
   const n = 'abcdef'.indexOf(e.key.toLowerCase()) >= 0 ? 'abcdef'.indexOf(e.key.toLowerCase()) : '123456'.indexOf(e.key);
   if (n >= 0 && n < rodada.lista[rodada.i].alternativas.length) escolher(n);
   if (e.key === 'Enter' && !$('#q-acao').disabled) $('#q-acao').click();
@@ -712,7 +737,7 @@ document.addEventListener('keydown', (e) => {
 // pela quantidade de questões de cada uma.
 async function encerrarRodada() {
   const respostas = rodada.respostas;
-  const minutos = Math.max(1, Math.round((Date.now() - rodada.inicio) / 60000));
+  const minutos = Math.max(1, Math.round(msCorridos(rodada.relogio) / 60000));
   if (respostas.length) {
     const porMateria = new Map();
     for (const r of respostas) {
@@ -733,6 +758,8 @@ async function encerrarRodada() {
     if (rodada.blocoId) await chamar('pularBloco', rodada.blocoId);
   }
   rodada.blocoId = null;
+  rodada.relogio = null;
+  desenharPausaRodada();
   const acertos = respostas.filter((r) => r.acertou).length;
   $('#q-resolver').hidden = true;
   $('#q-fim').hidden = false;
