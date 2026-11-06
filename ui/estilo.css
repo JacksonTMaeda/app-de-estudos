@@ -192,7 +192,10 @@ dialog input:not([type=checkbox]), dialog select, dialog textarea {
 /* Rodada pausada: a questão some até continuar, para não ser lida com o tempo parado. */
 .q-pausa { display: none; text-align: center; padding: 32px 0; }
 #q-resolver.pausada .q-pausa { display: block; }
-#q-resolver.pausada :is(.q-meta, .q-enunciado, .q-alternativas, .q-comentario, #q-acao, #q-pausar) { display: none; }
+#q-resolver.pausada :is(.q-meta, .q-enunciado, .q-alternativas, .q-comentario, #q-acao) { display: none; }
+/* Topo da rodada fixo ao rolar: o Pausar fica sempre à vista, mesmo em questão longa. */
+#q-resolver > .cabeca { position: sticky; top: -24px; z-index: 2; background: var(--cartao); padding: 8px 0; margin-top: -8px; align-items: center; }
+.q-topo-dir { display: flex; align-items: center; gap: 12px; }
 .q-comentario { margin-top: 16px; padding: 14px; border-radius: 10px; background: var(--fundo); border-left: 4px solid var(--primaria); line-height: 1.6; }
 .q-comentario strong.ok { color: var(--bom); }
 .q-comentario strong.nao { color: var(--ruim); }

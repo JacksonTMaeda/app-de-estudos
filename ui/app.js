@@ -722,7 +722,7 @@ $('#q-acao').addEventListener('click', () => {
 });
 $('#q-encerrar').addEventListener('click', encerrarRodada);
 
-// Teclado: A a E (ou 1 a 5) escolhe, Enter responde e avança.
+// Teclado: A a E (ou 1 a 5) escolhe, Enter responde e avança, P pausa.
 document.addEventListener('keydown', (e) => {
   if (!$('#q-simulado').hidden && !dialogo.open && !e.ctrlKey && !e.altKey) {
     const k = 'abcdef'.indexOf(e.key.toLowerCase()) >= 0 ? 'abcdef'.indexOf(e.key.toLowerCase()) : '123456'.indexOf(e.key);
@@ -732,6 +732,7 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if ($('#q-resolver').hidden || dialogo.open || e.ctrlKey || e.altKey) return;
+  if (e.key.toLowerCase() === 'p') return alternarPausaRodada(); // P pausa e continua
   if (rodadaPausada()) return;
   const n = 'abcdef'.indexOf(e.key.toLowerCase()) >= 0 ? 'abcdef'.indexOf(e.key.toLowerCase()) : '123456'.indexOf(e.key);
   if (n >= 0 && n < rodada.lista[rodada.i].alternativas.length) escolher(n);
