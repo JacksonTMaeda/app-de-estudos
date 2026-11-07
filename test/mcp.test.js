@@ -282,8 +282,22 @@ test('Claude vê os materiais, marca a página, liga à matéria e relê a pasta
   assert.deepEqual(marcadas.dados.materiais.map((g) => g.material), ['Aula 01']);
   assert.deepEqual(marcadas.dados.materiais[0].marcacoes.map((m) => [m.pagina, m.trecho, m.nota]), [[1, null, 'Cai na PRF'], [2, 'Crase antes de palavra feminina', null]]);
   assert.equal((await chamarFerramenta(c, 'marcacoes', { materia: 'Lógica' })).dados.total, 0);
+
+  // Podcasts: entram ao atualizar a lista e o Claude marca o que a pessoa ouviu fora do app.
+  mkdirSync(join(raiz, 'Portugues', 'Podcasts'));
+  writeFileSync(join(raiz, 'Portugues', 'Podcasts', 'Crase.mp3'), 'ID3');
+  const comSom = await chamarFerramenta(c, 'atualizar_materiais');
+  assert.deepEqual([comSom.dados.audios.total, comSom.dados.audios.novos], [1, 1]);
+  const pods = await chamarFerramenta(c, 'podcasts', { materia: 'Português' });
+  assert.deepEqual([pods.dados.total, pods.dados.ouvidos, pods.dados.podcasts[0].nome], [1, 0, 'Crase']);
+  const marcado = await chamarFerramenta(c, 'marcar_podcast_ouvido', { audio_id: pods.dados.podcasts[0].id });
+  assert.ok(marcado.dados.ouvido_em);
+  assert.equal((await chamarFerramenta(c, 'podcasts', { nao_ouvidos: true })).dados.total, 0);
+
   const lista = await c.pedir('tools/list', {});
   assert.equal(lista.result.tools.find((f) => f.name === 'marcacoes').annotations.readOnlyHint, true);
+  assert.equal(lista.result.tools.find((f) => f.name === 'podcasts').annotations.readOnlyHint, true);
+  assert.equal(lista.result.tools.find((f) => f.name === 'marcar_podcast_ouvido').annotations.readOnlyHint, false);
 });
 
 test('Claude cadastra fase, vê a virada, conta o bloco misturado e ajusta lotes, metas e preferências', async (t) => {

@@ -102,10 +102,19 @@ const api = {
   materiais: (planoId) => ({
     pasta: materiais.pastaDoPlano(db, planoId),
     lista: materiais.listarMateriais(db, planoId),
+    audios: materiais.listarAudios(db, planoId),
   }),
+  abrirAudio: (audioId) => {
+    const a = materiais.obterAudio(db, audioId);
+    const ext = a.caminho.split('.').pop().toLowerCase();
+    return { ...a, tipo: materiais.TIPO_AUDIO[ext] ?? 'audio/mp4', bytes: materiais.lerAudio(db, audioId) };
+  },
+  guardarPosicao: (audioId, posicao, duracao) => materiais.guardarPosicao(db, audioId, posicao, duracao),
+  marcarOuvido: (audioId, ouvido) => materiais.marcarOuvido(db, audioId, ouvido),
+  associarAudio: (audioId, materiaId) => materiais.associarMateriaAudio(db, audioId, materiaId),
   escolherPastaMateriais: async (planoId) => {
     const escolha = await dialog.showOpenDialog({
-      title: 'Escolha a pasta dos materiais em PDF (uma subpasta por matéria)',
+      title: 'Escolha a pasta dos materiais em PDF e áudio (uma subpasta por matéria)',
       properties: ['openDirectory'],
     });
     if (escolha.canceled || escolha.filePaths.length === 0) return null;

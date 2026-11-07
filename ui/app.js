@@ -2,6 +2,7 @@
 import { abrirLeitor, fecharLeitor } from './leitor.js';
 import { iniciarFixacao } from './fixacao.js';
 import { novoRelogio, pausar, continuar, msCorridos } from './pausa.js';
+import { iniciarPlayer, tempo } from './podcasts.js';
 
 const chamar = (nome, ...args) => window.estudos.chamar(nome, ...args);
 const $ = (sel) => document.querySelector(sel);
@@ -1075,25 +1076,30 @@ async function telaHistorico() {
 }
 
 // ---------- materiais ----------
+// Player dos podcasts: a lista se redesenha quando um termina ou pausa, para mostrar onde parou.
+const player = iniciarPlayer({ chamar, $, aoMudar: () => estado.tela === 'materiais' && telaMateriais() });
+
 async function telaMateriais() {
-  const { pasta, lista } = await chamar('materiais', estado.planoId);
+  const { pasta, lista, audios = [] } = await chamar('materiais', estado.planoId);
   $('#m-pasta').textContent = pasta ? `Pasta: ${pasta}` : 'Nenhuma pasta escolhida para este plano.';
   $('#m-atualizar').hidden = !pasta;
   $('#m-escolher').textContent = pasta ? 'Trocar pasta' : 'Escolher pasta';
   if (!pasta) {
-    $('#m-aviso').textContent = 'Escolha a pasta onde estão os PDFs. Cada subpasta com o nome de uma matéria fica ligada a ela; o PDF continua onde está, o app só guarda o caminho e a página onde você parou.';
+    $('#m-aviso').textContent = 'Escolha a pasta onde estão os PDFs e os podcasts. Cada subpasta com o nome de uma matéria fica ligada a ela; o arquivo continua onde está, o app só guarda o caminho e onde você parou.';
     $('#m-grupos').innerHTML = '';
     return;
   }
-  $('#m-aviso').textContent = lista.length ? '' : 'Nenhum PDF nesta pasta.';
+  $('#m-aviso').textContent = lista.length || audios.length ? '' : 'Nenhum PDF nem áudio nesta pasta.';
 
   // Um grupo por matéria, na ordem do edital; o que não casou com matéria fica agrupado pela pasta.
   const grupos = new Map();
-  for (const m of lista) {
+  const grupoDe = (m) => {
     const chave = m.materia_id ? `m${m.materia_id}` : `p${m.pasta.split(' / ')[0] || '(pasta principal)'}`;
-    if (!grupos.has(chave)) grupos.set(chave, { titulo: m.materia ?? (m.pasta.split(' / ')[0] || 'Pasta principal'), materiaId: m.materia_id, cor: m.cor, itens: [] });
-    grupos.get(chave).itens.push(m);
-  }
+    if (!grupos.has(chave)) grupos.set(chave, { titulo: m.materia ?? (m.pasta.split(' / ')[0] || 'Pasta principal'), materiaId: m.materia_id, cor: m.cor, itens: [], audios: [] });
+    return grupos.get(chave);
+  };
+  for (const m of lista) grupoDe(m).itens.push(m);
+  for (const a of audios) grupoDe(a).audios.push(a);
   const porNome = (a, b) => `${a.pasta}/${a.nome}`.localeCompare(`${b.pasta}/${b.nome}`, 'pt-BR', { numeric: true });
   const opcoes = (atual) => `<option value="">Sem matéria</option>` + estado.materias
     .map((m) => `<option value="${m.id}" ${m.id === atual ? 'selected' : ''}>${esc(m.nome)}</option>`).join('');
@@ -1106,11 +1112,13 @@ async function telaMateriais() {
     $('#m-grupos').innerHTML = `<div class="m-materias">${[...grupos.entries()].map(([chave, g]) => {
       const abertos = g.itens.filter((m) => m.aberto_em).length;
       const ultimo = g.itens.filter((m) => m.aberto_em).sort((a, b) => b.aberto_em.localeCompare(a.aberto_em))[0];
+      const ouvidos = g.audios.filter((a) => a.ouvido_em).length;
       return `<button class="cartao m-cartao" data-grupo="${esc(chave)}">
         <span class="m-cabeca">${g.materiaId ? `<span class="ponto" style="background:${cor(g.materiaId, g.cor)}"></span>` : '📁'}<strong>${esc(g.titulo)}</strong></span>
         <span class="sutil">${g.itens.length} PDF${g.itens.length === 1 ? '' : 's'} · ${abertos} já aberto${abertos === 1 ? '' : 's'}</span>
-        <span class="m-barra"><span style="width:${(abertos / g.itens.length) * 100}%"></span></span>
+        <span class="m-barra"><span style="width:${g.itens.length ? (abertos / g.itens.length) * 100 : 0}%"></span></span>
         <span class="sutil m-ultimo">${ultimo ? `Último: ${esc(ultimo.nome)}` : 'Nenhum aberto ainda'}</span>
+        ${g.audios.length ? `<span class="sutil m-pod">🎧 ${g.audios.length} podcast${g.audios.length === 1 ? '' : 's'} · ${ouvidos} ouvido${ouvidos === 1 ? '' : 's'}</span>` : ''}
       </button>`;
     }).join('')}${semPdf.map((m) => `<div class="cartao m-cartao vazia">
         <span class="m-cabeca"><span class="ponto" style="background:${cor(m.id, m.cor)}"></span><strong>${esc(m.nome)}</strong></span>
@@ -1129,6 +1137,8 @@ async function telaMateriais() {
       <button id="m-voltar" class="texto m-voltar">← Todas as matérias</button>
       <h3>${g.materiaId ? `<span class="ponto" style="background:${cor(g.materiaId, g.cor)}"></span>` : '📁'} ${esc(g.titulo)}
         <span class="sutil">${g.itens.length} PDF${g.itens.length === 1 ? '' : 's'}</span></h3>
+      ${g.audios.length ? podcastsDoGrupo(g, porNome, opcoes) : ''}
+      ${g.itens.length && g.audios.length ? '<h3 class="m-sub">📄 PDFs</h3>' : ''}
       <ul class="materiais">${g.itens.sort(porNome).map((m) => {
         const lido = m.paginas ? m.ultima_pagina / m.paginas : 0;
         const sub = [m.pasta, m.aberto_em ? `aberto em ${dataBR(m.aberto_em)}` : 'nunca aberto'].filter(Boolean).join(' · ');
@@ -1151,6 +1161,43 @@ async function telaMateriais() {
     await chamar('associarMaterial', Number(s.dataset.materia), s.value ? Number(s.value) : null);
     telaMateriais();
   }));
+  $('#m-grupos').querySelectorAll('[data-ouvir]').forEach((b) => b.addEventListener('click', async () => {
+    await player.tocar(Number(b.dataset.ouvir));
+    telaMateriais();
+  }));
+  $('#m-grupos').querySelectorAll('[data-ouvido]').forEach((c) => c.addEventListener('change', async () => {
+    await chamar('marcarOuvido', Number(c.dataset.ouvido), c.checked);
+    telaMateriais();
+  }));
+  $('#m-grupos').querySelectorAll('[data-materia-audio]').forEach((s) => s.addEventListener('change', async () => {
+    await chamar('associarAudio', Number(s.dataset.materiaAudio), s.value ? Number(s.value) : null);
+    telaMateriais();
+  }));
+}
+
+// Podcasts da matéria, acima dos PDFs: o que falta ouvir primeiro, depois os já ouvidos.
+function podcastsDoGrupo(g, porNome, opcoes) {
+  const ouvidos = g.audios.filter((a) => a.ouvido_em).length;
+  const ordem = [...g.audios].sort((a, b) => !!a.ouvido_em - !!b.ouvido_em || porNome(a, b));
+  return `<h3 class="m-sub">🎧 Podcasts <span class="sutil">${ouvidos} de ${g.audios.length} ouvido${g.audios.length === 1 ? '' : 's'}</span></h3>
+    <ul class="materiais podcasts">${ordem.map((a) => {
+      const tocando = player.tocandoId() === a.id;
+      const parte = a.duracao ? Math.min(1, a.posicao / a.duracao) : 0;
+      const sub = [
+        a.pasta,
+        a.ouvido_em ? `ouvido em ${dataBR(a.ouvido_em)}` : a.posicao > 5 ? `parou em ${tempo(a.posicao)}` : 'não ouvido',
+      ].filter(Boolean).join(' · ');
+      const noFim = a.duracao && a.posicao >= a.duracao - 1;
+      const botao = tocando && player.tocando() ? 'Pausar' : a.ouvido_em && (noFim || !tocando) ? 'Ouvir de novo' : a.posicao > 5 ? 'Continuar' : 'Ouvir';
+      return `<li class="${a.ouvido_em ? 'ouvido' : ''} ${tocando ? 'tocando' : ''}">
+        <div class="m-nome"><button data-ouvir="${a.id}">${tocando ? '🔊 ' : ''}${esc(a.nome)}</button><span class="sutil">${esc(sub)}</span></div>
+        <select data-materia-audio="${a.id}" aria-label="Matéria">${opcoes(a.materia_id)}</select>
+        <label class="m-ouvido"><input type="checkbox" data-ouvido="${a.id}" ${a.ouvido_em ? 'checked' : ''}> Ouvido</label>
+        <div class="m-progresso"><span class="sutil">${a.duracao ? tempo(a.duracao) : ''}</span>
+          <div class="m-barra"><div class="${a.ouvido_em ? 'ouvido' : ''}" style="width:${(a.ouvido_em ? 1 : parte) * 100}%"></div></div></div>
+        <button class="secundario" data-ouvir="${a.id}">${botao}</button>
+      </li>`;
+    }).join('')}</ul>`;
 }
 
 async function lerMaterial(id) {
@@ -1168,7 +1215,9 @@ async function escanear(nome) {
     const r = await chamar(nome, estado.planoId);
     if (r) {
       await telaMateriais();
-      $('#m-aviso').textContent = `${r.total} PDFs na pasta; ${r.novos} novos${r.sumiram ? `, ${r.sumiram} saíram da lista porque não estão mais lá` : ''}.${r.pastas_ilegiveis?.length ? ` Não deu para ler ${r.pastas_ilegiveis.length} subpasta(s); o que estava nelas continua na lista.` : ''}`;
+      const a = r.audios;
+      const sons = a ? ` ${a.total} podcast${a.total === 1 ? '' : 's'}; ${a.novos} novo${a.novos === 1 ? '' : 's'}${a.sumiram ? `, ${a.sumiram} saíram` : ''}.` : '';
+      $('#m-aviso').textContent = `${r.total} PDFs na pasta; ${r.novos} novos${r.sumiram ? `, ${r.sumiram} saíram da lista porque não estão mais lá` : ''}.${sons}${r.pastas_ilegiveis?.length ? ` Não deu para ler ${r.pastas_ilegiveis.length} subpasta(s); o que estava nelas continua na lista.` : ''}`;
     } else await telaMateriais();
   } catch (erro) {
     $('#m-aviso').textContent = erro.message;

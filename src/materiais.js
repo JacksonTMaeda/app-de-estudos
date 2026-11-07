@@ -1,6 +1,6 @@
 // Materiais em PDF: o app guarda só o caminho e a página onde parou. O PDF nunca é copiado,
 // movido nem alterado; ele continua na pasta de quem estuda. Grifos e notas também moram no banco.
-import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, existsSync, statSync, openSync, fstatSync, readSync, closeSync } from 'node:fs';
 import { join, relative, resolve, sep, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { colunasDe, transacao } from './db.js';
@@ -34,7 +34,24 @@ CREATE TABLE IF NOT EXISTS marcacao (
   criado_em TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 CREATE INDEX IF NOT EXISTS marcacao_arquivo ON marcacao (arquivo, pagina);
+
+-- 1.6: áudios (podcasts) achados na mesma pasta dos PDFs. Como o PDF, o arquivo nunca é copiado:
+-- o app guarda o caminho, onde parou (segundos) e quando foi ouvido até o fim.
+CREATE TABLE IF NOT EXISTS audio (
+  id INTEGER PRIMARY KEY,
+  plano_id INTEGER NOT NULL REFERENCES plano(id) ON DELETE CASCADE,
+  materia_id INTEGER REFERENCES materia(id) ON DELETE SET NULL,
+  caminho TEXT NOT NULL,
+  nome TEXT NOT NULL,
+  pasta TEXT NOT NULL DEFAULT '',
+  duracao REAL,
+  posicao REAL NOT NULL DEFAULT 0,
+  tocado_em TEXT,
+  ouvido_em TEXT,
+  UNIQUE (plano_id, caminho)
+);
 `;
+export const AUDIO = /\.(m4a|mp3|wav|ogg|oga|opus|aac|flac)$/i;
 const PROFUNDIDADE = 4;
 const LIMITE = 5000;
 
@@ -87,12 +104,13 @@ export function materiaDaPasta(nomePasta, materias) {
   return melhor?.id ?? null;
 }
 
-// Devolve os PDFs achados e as pastas que não deu para ler (sem permissão, em uso...).
+// Devolve os PDFs e os áudios achados e as pastas que não deu para ler (sem permissão, em uso...).
 export function acharPdfs(raiz) {
   const achados = [];
+  const audios = [];
   const ilegiveis = [];
   const andar = (pasta, nivel) => {
-    if (nivel > PROFUNDIDADE || achados.length >= LIMITE) return;
+    if (nivel > PROFUNDIDADE || achados.length + audios.length >= LIMITE) return;
     let itens;
     try {
       itens = readdirSync(pasta, { withFileTypes: true });
@@ -104,10 +122,11 @@ export function acharPdfs(raiz) {
       const caminho = join(pasta, item.name);
       if (item.isDirectory()) andar(caminho, nivel + 1);
       else if (item.isFile() && /\.pdf$/i.test(item.name)) achados.push(caminho);
+      else if (item.isFile() && AUDIO.test(item.name)) audios.push(caminho);
     }
   };
   andar(raiz, 0);
-  return { pdfs: achados, ilegiveis };
+  return { pdfs: achados, audios, ilegiveis };
 }
 
 const dentroDe = (raiz, caminho) => {
@@ -122,7 +141,7 @@ export function escanearPasta(db, planoId, raiz, achar = acharPdfs) {
   raiz = resolve(raiz);
   if (!existsSync(raiz) || !statSync(raiz).isDirectory()) throw new Error(`Pasta não encontrada: ${raiz}`);
   const materias = db.prepare('SELECT id, nome FROM materia WHERE plano_id = ?').all(planoId);
-  const { pdfs, ilegiveis } = achar(raiz);
+  const { pdfs, audios = [], ilegiveis } = achar(raiz);
   return transacao(db, () => {
     db.prepare(`INSERT INTO preferencia (chave, valor) VALUES (?, ?)
       ON CONFLICT (chave) DO UPDATE SET valor = excluded.valor`).run(chave(planoId), JSON.stringify(raiz));
@@ -146,9 +165,153 @@ export function escanearPasta(db, planoId, raiz, achar = acharPdfs) {
       apagar.run(planoId, caminho);
       sumiram++;
     }
-    return { pasta: raiz, total: pdfs.length, novos, sumiram, pastas_ilegiveis: ilegiveis };
+    const sons = sincronizarAudios(db, planoId, raiz, audios, ilegiveis, materias);
+    return { pasta: raiz, total: pdfs.length, novos, sumiram, audios: sons, pastas_ilegiveis: ilegiveis };
   });
 }
+
+// Áudio novo entra ligado à matéria pelo nome da primeira subpasta; se o nome não casa (ex.: "CTB"),
+// herda a matéria que a maioria dos PDFs dessa subpasta tem (inclusive a escolhida à mão).
+function sincronizarAudios(db, planoId, raiz, audios, ilegiveis, materias) {
+  const existentes = new Set(db.prepare('SELECT caminho FROM audio WHERE plano_id = ?').all(planoId).map((a) => a.caminho));
+  const inserir = db.prepare('INSERT INTO audio (plano_id, materia_id, caminho, nome, pasta) VALUES (?, ?, ?, ?, ?)');
+  const daMaioria = db.prepare(`SELECT materia_id FROM material WHERE plano_id = ? AND materia_id IS NOT NULL
+    AND (pasta = ? OR pasta LIKE ? ESCAPE '\\') GROUP BY materia_id ORDER BY count(*) DESC LIMIT 1`);
+  const escapar = (t) => t.replace(/[\\%_]/g, (c) => `\\${c}`);
+  const cache = new Map();
+  const materiaDe = (primeira) => {
+    if (!primeira) return null;
+    if (!cache.has(primeira)) {
+      cache.set(primeira, materiaDaPasta(primeira, materias) ?? daMaioria.get(planoId, primeira, `${escapar(primeira)} / %`)?.materia_id ?? null);
+    }
+    return cache.get(primeira);
+  };
+  const semDuracao = new Set(db.prepare('SELECT caminho FROM audio WHERE plano_id = ? AND duracao IS NULL').all(planoId).map((a) => a.caminho));
+  const gravarDuracao = db.prepare('UPDATE audio SET duracao = ? WHERE plano_id = ? AND caminho = ? AND duracao IS NULL');
+  let novos = 0;
+  for (const caminho of audios) {
+    if (!existentes.delete(caminho)) {
+      const partes = relative(raiz, caminho).split(sep);
+      inserir.run(planoId, materiaDe(partes.length > 1 ? partes[0] : ''), caminho, partes.at(-1).replace(AUDIO, ''), partes.slice(0, -1).join(' / '));
+      novos++;
+    } else if (!semDuracao.has(caminho)) continue;
+    // Duração lida do cabeçalho do M4A, para a lista já mostrar quanto dura antes de tocar.
+    const duracao = duracaoMp4(caminho);
+    if (duracao) gravarDuracao.run(duracao, planoId, caminho);
+  }
+  const apagar = db.prepare('DELETE FROM audio WHERE plano_id = ? AND caminho = ?');
+  let sumiram = 0;
+  for (const caminho of existentes) {
+    if (ilegiveis.some((pasta) => dentroDe(pasta, caminho))) continue;
+    apagar.run(planoId, caminho);
+    sumiram++;
+  }
+  return { total: audios.length, novos, sumiram };
+}
+
+// Duração em segundos de um M4A/MP4, pelo átomo mvhd dentro do moov. Lê só os cabeçalhos das caixas,
+// não o arquivo inteiro (o podcast tem 30 a 50 MB). Qualquer coisa estranha devolve null.
+export function duracaoMp4(caminho) {
+  if (!/\.(m4a|mp4)$/i.test(caminho)) return null;
+  let fd;
+  try {
+    fd = openSync(caminho, 'r');
+    const tamanho = fstatSync(fd).size;
+    const ler = (pos, n) => {
+      const b = Buffer.alloc(n);
+      return readSync(fd, b, 0, n, pos) === n ? b : null;
+    };
+    for (let pos = 0; pos + 8 <= tamanho; ) {
+      const cab = ler(pos, 16);
+      if (!cab) return null;
+      let tam = cab.readUInt32BE(0);
+      const tipo = cab.toString('latin1', 4, 8);
+      let corpo = 8;
+      if (tam === 1) {
+        tam = Number(cab.readBigUInt64BE(8));
+        corpo = 16;
+      } else if (tam === 0) tam = tamanho - pos;
+      if (tam < corpo) return null;
+      if (tipo === 'moov') {
+        const moov = ler(pos + corpo, Math.min(tam - corpo, 32 * 1024 * 1024));
+        if (!moov) return null;
+        for (let p = 0; p + 8 <= moov.length; ) {
+          const t = moov.readUInt32BE(p);
+          if (t < 8) return null;
+          if (moov.toString('latin1', p + 4, p + 8) === 'mvhd') {
+            const v = moov[p + 8];
+            const escala = v === 1 ? moov.readUInt32BE(p + 28) : moov.readUInt32BE(p + 20);
+            const dur = v === 1 ? Number(moov.readBigUInt64BE(p + 32)) : moov.readUInt32BE(p + 24);
+            return escala > 0 && dur > 0 ? Math.round((dur / escala) * 10) / 10 : null;
+          }
+          p += t;
+        }
+        return null;
+      }
+      pos += tam;
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+// ---------- áudios (podcasts) ----------
+const temTabelaAudio = (db) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audio'").get();
+
+export function listarAudios(db, planoId) {
+  if (!temTabelaAudio(db)) return [];
+  return db.prepare(`
+    SELECT a.id, a.nome, a.pasta, a.materia_id, m.nome AS materia, m.cor,
+           a.duracao, a.posicao, a.tocado_em, a.ouvido_em
+    FROM audio a LEFT JOIN materia m ON m.id = a.materia_id
+    WHERE a.plano_id = ?
+    ORDER BY m.posicao IS NULL, m.posicao, a.pasta, a.nome`).all(planoId);
+}
+
+export function obterAudio(db, audioId) {
+  const a = temTabelaAudio(db) && db.prepare(`SELECT a.*, m.nome AS materia FROM audio a LEFT JOIN materia m ON m.id = a.materia_id
+    WHERE a.id = ?`).get(audioId);
+  if (!a) throw new Error(`Áudio ${audioId} não existe.`);
+  return a;
+}
+
+export function associarMateriaAudio(db, audioId, materiaId) {
+  const a = obterAudio(db, audioId);
+  if (materiaId != null && !db.prepare('SELECT 1 FROM materia WHERE id = ? AND plano_id = ?').get(materiaId, a.plano_id)) {
+    throw new Error('Essa matéria não é do plano deste áudio.');
+  }
+  db.prepare('UPDATE audio SET materia_id = ? WHERE id = ?').run(materiaId ?? null, audioId);
+}
+
+// Onde parou, em segundos. A duração vem do player na primeira vez que o áudio toca.
+export function guardarPosicao(db, audioId, posicao, duracao) {
+  obterAudio(db, audioId);
+  const p = Math.max(0, Number(posicao) || 0);
+  const d = Number(duracao) > 0 ? Number(duracao) : null;
+  db.prepare(`UPDATE audio SET posicao = ?, duracao = COALESCE(?, duracao), tocado_em = datetime('now', 'localtime')
+    WHERE id = ?`).run(Math.round((d ? Math.min(p, d) : p) * 10) / 10, d, audioId);
+}
+
+// Ouvido até o fim (ou marcado à mão). Desmarcar volta para "não ouvido" sem perder onde parou.
+export function marcarOuvido(db, audioId, ouvido = true) {
+  obterAudio(db, audioId);
+  db.prepare(`UPDATE audio SET ouvido_em = ${ouvido ? "datetime('now', 'localtime')" : 'NULL'} WHERE id = ?`).run(audioId);
+  return obterAudio(db, audioId);
+}
+
+// Bytes do áudio para o player, com a mesma trava do PDF: só o que está na lista e dentro da pasta do plano.
+export function lerAudio(db, audioId) {
+  const a = obterAudio(db, audioId);
+  const raiz = pastaDoPlano(db, a.plano_id);
+  if (!raiz || !dentroDe(raiz, a.caminho) || !AUDIO.test(a.caminho)) throw new Error('Áudio fora da pasta de materiais do plano.');
+  if (!existsSync(a.caminho)) throw new Error(`O arquivo não está mais na pasta: ${a.nome}. Atualize a lista.`);
+  return readFileSync(a.caminho);
+}
+
+export const TIPO_AUDIO = { m4a: 'audio/mp4', mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', aac: 'audio/aac', flac: 'audio/flac' };
 
 export function listarMateriais(db, planoId) {
   return db.prepare(`

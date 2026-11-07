@@ -838,8 +838,8 @@ Object.assign(FERRAMENTAS, {
 
   atualizar_materiais: {
     description:
-      'Lê de novo a pasta de materiais do plano: PDFs novos entram (ligados à matéria pelo nome da subpasta), os que saíram da pasta saem da lista. ' +
-      'Os PDFs nunca são tocados; só a lista do app muda. A pasta em si só se escolhe ou troca pela tela Materiais do app.',
+      'Lê de novo a pasta de materiais do plano: PDFs e áudios novos entram (ligados à matéria pelo nome da subpasta), os que saíram da pasta saem da lista. ' +
+      'Os arquivos nunca são tocados; só a lista do app muda. A pasta em si só se escolhe ou troca pela tela Materiais do app.',
     inputSchema: { type: 'object', properties: { ...PLANO } },
     escreve: true,
     rodar({ plano_id }) {
@@ -847,6 +847,55 @@ Object.assign(FERRAMENTAS, {
       const pasta = materiais.pastaDoPlano(banco(), plano.id);
       if (!pasta) throw new Error('Este plano ainda não tem pasta de materiais. A pessoa escolhe a pasta na tela Materiais do app.');
       return { plano: plano.nome, ...materiais.escanearPasta(banco(), plano.id, pasta) };
+    },
+  },
+
+  podcasts: {
+    description:
+      'Áudios de estudo (podcasts do NotebookLM e afins) que o app achou na pasta de materiais, por matéria, com duração, onde a pessoa parou e se já ouviu até o fim. ' +
+      'Entram sozinhos ao atualizar a lista de materiais; a pessoa ouve no player da tela Materiais. O arquivo nunca é alterado.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...PLANO,
+        materia: { type: 'string', description: 'Nome ou parte do nome da matéria. Use "sem materia" para os não ligados a nenhuma.' },
+        nao_ouvidos: { type: 'boolean', description: 'true devolve só os que ainda não foram ouvidos até o fim.' },
+      },
+    },
+    rodar({ plano_id, materia, nao_ouvidos }) {
+      const plano = escolherPlano(plano_id);
+      let lista = materiais.listarAudios(banco(), plano.id);
+      if (materia != null) {
+        lista = normal(materia).startsWith('sem materia')
+          ? lista.filter((a) => !a.materia_id)
+          : lista.filter((a) => a.materia_id === materiaPorNome(plano.id, materia).id);
+      }
+      if (nao_ouvidos) lista = lista.filter((a) => !a.ouvido_em);
+      const caminhos = new Map(banco().prepare('SELECT id, caminho FROM audio WHERE plano_id = ?').all(plano.id).map((a) => [a.id, a.caminho]));
+      const min = (s) => (s == null ? null : Math.round(s / 6) / 10);
+      return {
+        plano: plano.nome,
+        total: lista.length,
+        ouvidos: lista.filter((a) => a.ouvido_em).length,
+        podcasts: lista.map((a) => ({
+          id: a.id, nome: a.nome, materia: a.materia ?? null, subpasta: a.pasta, caminho: caminhos.get(a.id),
+          duracao_min: min(a.duracao), parou_em_min: a.posicao ? min(a.posicao) : null, tocado_em: a.tocado_em, ouvido_em: a.ouvido_em,
+        })),
+      };
+    },
+  },
+
+  marcar_podcast_ouvido: {
+    description: 'Marca um podcast como ouvido até o fim (ou desmarca, com ouvido false), por exemplo quando a pessoa conta que ouviu fora do app.',
+    inputSchema: {
+      type: 'object',
+      properties: { audio_id: { type: 'integer', description: 'id da ferramenta podcasts' }, ouvido: { type: 'boolean', description: 'Padrão true' } },
+      required: ['audio_id'],
+    },
+    escreve: true,
+    rodar({ audio_id, ouvido = true }) {
+      const a = materiais.marcarOuvido(banco(), audio_id, ouvido);
+      return { podcast: a.nome, materia: a.materia ?? null, ouvido_em: a.ouvido_em };
     },
   },
 });

@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; img-src 'self' blob: data:; font-src 'self' data:">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; img-src 'self' blob: data:; media-src 'self' blob:; font-src 'self' data:">
   <title>App De Estudos</title>
   <link rel="stylesheet" href="estilo.css">
 </head>
@@ -17,7 +17,7 @@
       <button data-tela="flashcards">🃏 Flashcards</button>
       <button data-tela="mapas">🧠 Mapas</button>
       <button data-tela="analise">📊 Análise</button>
-      <button data-tela="materiais">📄 Materiais</button>
+      <button data-tela="materiais">📄 Materiais e podcasts</button>
       <button data-tela="edital">📋 Edital</button>
       <button data-tela="historico">🕘 Histórico</button>
     </nav>
@@ -275,7 +275,7 @@
     <section id="tela-materiais" class="tela" hidden>
       <div class="cartao">
         <div class="cabeca">
-          <div><h2>Materiais em PDF</h2><p id="m-pasta" class="sutil"></p></div>
+          <div><h2>Materiais em PDF e podcasts</h2><p id="m-pasta" class="sutil"></p></div>
           <div class="acoes">
             <button id="m-atualizar" class="secundario" hidden>Atualizar lista</button>
             <button id="m-escolher" class="primario">Escolher pasta</button>
@@ -370,6 +370,15 @@
       </div>
     </form>
   </dialog>
+
+  <div id="player" class="player" hidden>
+    <div class="p-titulo"><strong id="p-nome"></strong><span id="p-materia" class="sutil"></span></div>
+    <button id="p-voltar" class="texto" title="Voltar 15 segundos">⟲ 15</button>
+    <audio id="p-audio" controls preload="metadata"></audio>
+    <button id="p-avancar" class="texto" title="Avançar 30 segundos">30 ⟳</button>
+    <select id="p-velocidade" aria-label="Velocidade"></select>
+    <button id="p-fechar" class="texto" title="Fechar o player (guarda onde parou)">✕</button>
+  </div>
 
   <script src="app.js" type="module"></script>
 </body>

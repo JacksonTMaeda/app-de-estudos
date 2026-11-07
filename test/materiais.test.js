@@ -200,3 +200,85 @@ test('banco da 1.1 ganha a coluna e a tabela das marcações sem perder material
   assert.deepEqual(mt.listarMarcacoes(db, 1), []);
   mt.prepararMateriais(db); // de novo, sem erro
 });
+
+// M4A mínimo: ftyp, mdat e moov com mvhd (versão 0), como o NotebookLM grava (moov no fim).
+function m4a(segundos) {
+  const caixa = (tipo, corpo) => {
+    const cab = Buffer.alloc(8);
+    cab.writeUInt32BE(8 + corpo.length, 0);
+    cab.write(tipo, 4, 'latin1');
+    return Buffer.concat([cab, corpo]);
+  };
+  const mvhd = Buffer.alloc(20);
+  mvhd.writeUInt32BE(1000, 12);
+  mvhd.writeUInt32BE(Math.round(segundos * 1000), 16);
+  return Buffer.concat([caixa('ftyp', Buffer.from('M4A \0\0\0\0', 'latin1')), caixa('mdat', Buffer.alloc(300)), caixa('moov', caixa('mvhd', mvhd))]);
+}
+
+test('podcasts entram com a matéria da pasta, a duração do arquivo e saem quando somem', () => {
+  const { db, planoId, raiz, pdf, limpar } = preparar();
+  const som = (...partes) => {
+    mkdirSync(join(raiz, ...partes.slice(0, -1)), { recursive: true });
+    writeFileSync(join(raiz, ...partes), partes.at(-1).endsWith('.m4a') ? m4a(1234.5) : 'ID3');
+  };
+  pdf('Portugues', 'Aula.pdf');
+  // "CTB" não casa com nenhum nome: herda a matéria escolhida à mão para os PDFs dessa pasta.
+  pdf('CTB', 'Aulas', 'Aula 09.pdf');
+  som('Portugues', 'Podcasts', 'Crase - Julgue o Item.m4a');
+  som('CTB', 'Podcasts', 'Crimes.mp3');
+  som('Portugues', 'Podcasts', 'roteiro.txt');
+  mt.escanearPasta(db, planoId, raiz);
+  const logica = db.prepare("SELECT id FROM materia WHERE nome LIKE 'Raciocínio%'").get().id;
+  mt.associarMateria(db, mt.listarMateriais(db, planoId).find((m) => m.pasta === 'CTB / Aulas').id, logica);
+  db.prepare('DELETE FROM audio').run();
+  const r = mt.escanearPasta(db, planoId, raiz);
+  assert.deepEqual([r.total, r.audios.total, r.audios.novos], [2, 2, 2]);
+  const lista = mt.listarAudios(db, planoId);
+  const crase = lista.find((a) => a.nome === 'Crase - Julgue o Item');
+  assert.equal(crase.materia, 'Língua Portuguesa');
+  assert.equal(crase.pasta, 'Portugues / Podcasts');
+  assert.equal(crase.duracao, 1234.5);
+  const ctb = lista.find((a) => a.nome === 'Crimes');
+  assert.equal(ctb.materia_id, logica);
+  assert.equal(ctb.duracao, null); // MP3 só ganha duração quando toca
+
+  mt.guardarPosicao(db, crase.id, 600, 1234.5);
+  mt.guardarPosicao(db, ctb.id, 99999, 300);
+  assert.equal(mt.obterAudio(db, ctb.id).posicao, 300);
+  assert.ok(mt.marcarOuvido(db, crase.id).ouvido_em);
+  assert.equal(mt.marcarOuvido(db, crase.id, false).ouvido_em, null);
+  assert.equal(mt.obterAudio(db, crase.id).posicao, 600);
+
+  rmSync(join(raiz, 'CTB', 'Podcasts'), { recursive: true });
+  const r2 = mt.escanearPasta(db, planoId, raiz);
+  assert.deepEqual([r2.audios.total, r2.audios.novos, r2.audios.sumiram], [1, 0, 1]);
+  assert.equal(mt.listarAudios(db, planoId)[0].posicao, 600);
+  limpar();
+});
+
+test('só toca áudio de dentro da pasta do plano', () => {
+  const { db, planoId, raiz, limpar } = preparar();
+  mkdirSync(join(raiz, 'Portugues'));
+  writeFileSync(join(raiz, 'Portugues', 'Aula.m4a'), m4a(10));
+  mt.escanearPasta(db, planoId, raiz);
+  const [a] = mt.listarAudios(db, planoId);
+  assert.equal(mt.lerAudio(db, a.id).length, m4a(10).length);
+  db.prepare('UPDATE audio SET caminho = ? WHERE id = ?').run(join(raiz, '..', 'fora.m4a'), a.id);
+  assert.throws(() => mt.lerAudio(db, a.id), /fora da pasta/);
+  db.prepare('UPDATE audio SET caminho = ? WHERE id = ?').run(join(raiz, 'Portugues', 'segredo.txt'), a.id);
+  assert.throws(() => mt.lerAudio(db, a.id), /fora da pasta/);
+  assert.throws(() => mt.obterAudio(db, 999), /não existe/);
+  limpar();
+});
+
+test('duração do M4A vem do cabeçalho e arquivo torto devolve null', () => {
+  const pasta = mkdtempSync(join(tmpdir(), 'm4a-'));
+  writeFileSync(join(pasta, 'bom.m4a'), m4a(61.2));
+  writeFileSync(join(pasta, 'torto.m4a'), Buffer.from('não é mp4 de jeito nenhum'));
+  writeFileSync(join(pasta, 'vazio.m4a'), Buffer.alloc(0));
+  assert.equal(mt.duracaoMp4(join(pasta, 'bom.m4a')), 61.2);
+  assert.equal(mt.duracaoMp4(join(pasta, 'torto.m4a')), null);
+  assert.equal(mt.duracaoMp4(join(pasta, 'vazio.m4a')), null);
+  assert.equal(mt.duracaoMp4(join(pasta, 'nao-existe.m4a')), null);
+  rmSync(pasta, { recursive: true, force: true });
+});
