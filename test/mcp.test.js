@@ -168,6 +168,27 @@ test('Claude acrescenta e apaga questões, refaz o ciclo e mexe em plano', async
   assert.equal(add.dados.adicionadas, 2);
   const invalida = await chamarFerramenta(c, 'adicionar_questoes', { materia: 'Lógica', lote: 't', questoes: [{ enunciado: 'x', alternativas: ['a'], correta: 0 }] });
   assert.ok(invalida.erro);
+  // O esquema é cobrado antes de a ferramenta rodar: tipo, enum e formato de data errados não gravam nada.
+  const antes = (await chamarFerramenta(c, 'historico_sessoes')).dados.sessoes.length;
+  for (const [args, trecho] of [
+    [{ materia: 'Lógica', tipo: 'leitura', minutos: 10 }, /tipo: precisa ser um de teoria, questoes, revisao/],
+    [{ materia: 'Lógica', tipo: 'teoria', minutos: '10' }, /minutos: esperava número inteiro/],
+    [{ materia: 'Lógica', tipo: 'teoria', minutos: 10, quando: '09-11-2026 20:00' }, /quando: formato inválido/],
+    [{ tipo: 'teoria', minutos: 10 }, /materia: é obrigatório/],
+  ]) {
+    const r = await chamarFerramenta(c, 'registrar_estudo', args);
+    assert.ok(r.erro && trecho.test(r.dados) && /Nada foi feito/.test(r.dados), r.dados);
+  }
+  assert.equal((await chamarFerramenta(c, 'historico_sessoes')).dados.sessoes.length, antes);
+  // Gabarito como texto: "1" é o índice 1 (antes virava alternativa A); texto que não é gabarito é recusado.
+  const textual = await chamarFerramenta(c, 'adicionar_questoes', { materia: 'Lógica', lote: 'gabarito', questoes: [{ enunciado: 'x', alternativas: ['a', 'b', 'c'], correta: '1' }] });
+  assert.equal(textual.dados.adicionadas, 1);
+  assert.ok((await chamarFerramenta(c, 'adicionar_questoes', { materia: 'Lógica', lote: 'gabarito', questoes: [{ enunciado: 'y', alternativas: ['a', 'b'], correta: 'a ou b' }] })).erro);
+  // Assunto pelo número do edital vale como número ou como texto; nome herdado de Object não é ferramenta.
+  assert.ok(!(await chamarFerramenta(c, 'marcar_assunto', { materia: 'Português', assunto: 2, concluido: true })).erro);
+  assert.ok(!(await chamarFerramenta(c, 'marcar_assunto', { materia: 'Português', assunto: '2', concluido: false })).erro);
+  const herdada = await chamarFerramenta(c, 'constructor', {});
+  assert.ok(herdada.erro && /Ferramenta desconhecida/.test(herdada.dados));
   const apagada = await chamarFerramenta(c, 'apagar_questao', { id: add.dados.ids[0] });
   assert.equal(apagada.dados.apagada.tema, 'Conectivos');
 
@@ -392,7 +413,8 @@ test('o servidor confere os números que o Claude manda, mesmo fora do esquema',
   t.after(() => c.fechar());
   await c.pedir('initialize', { protocolVersion: '2025-06-18' });
   const meta = await chamarFerramenta(c, 'definir_meta_acerto', { materia: 'Português', meta_pct: '<img src=x onerror=alert(1)>' });
-  assert.ok(meta.erro && /percentual/.test(meta.dados));
+  // Desde a 1.6.1 quem recusa primeiro é a conferência do esquema, antes de a ferramenta rodar.
+  assert.ok(meta.erro && /meta_pct: esperava número/.test(meta.dados));
   for (const ruim of [{ intervalos_revisao: 'abc' }, { intervalos_revisao: [0] }, { minutos_constancia: 'x' }, { modo_semana: 'outro' }, { teto_semanal_min: -5 }]) {
     const r = await chamarFerramenta(c, 'ajustar_preferencias', ruim);
     assert.ok(r.erro, JSON.stringify(ruim));

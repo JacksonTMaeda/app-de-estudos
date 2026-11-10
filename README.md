@@ -13,7 +13,7 @@ O programa se atualiza sozinho: ao abrir (e a cada 6 horas) ele confere as relea
 ## Seus dados
 
 - O banco fica em `Documentos\App De Estudos\estudos.db`, **fora** da pasta do programa. Instalar, atualizar ou desinstalar o programa não toca nele.
-- Cópias automáticas ficam em `Documentos\App De Estudos\copias` (as 30 mais novas): uma ao abrir uma versão nova do programa, **antes** de qualquer ajuste no banco; uma por dia; e uma antes de cada operação do Claude que apaga ou refaz o ciclo.
+- Cópias automáticas ficam em `Documentos\App De Estudos\copias`: uma ao abrir uma versão nova do programa, **antes** de qualquer ajuste no banco; uma por dia; e uma antes de cada operação do Claude que apaga ou refaz o ciclo. O programa guarda as 14 diárias, as 10 de versão e as 20 outras mais novas, cada grupo com o seu teto, e nunca apaga cópia que você fez à mão com outro nome.
 - Para voltar uma cópia: feche o programa e copie o arquivo de volta como `estudos.db`.
 - Mudança de banco em versão nova é sempre aditiva (coluna ou tabela nova); nada é apagado na atualização.
 

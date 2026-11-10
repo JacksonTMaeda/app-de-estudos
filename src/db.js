@@ -7,7 +7,19 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 
 export const CAMINHO_PADRAO = join(homedir(), 'Documents', 'App De Estudos', 'estudos.db');
-const COPIAS_GUARDADAS = 30;
+
+// Quantas cópias ficam, por motivo. O teto é separado porque uma leva de cópias "antes de apagar"
+// (o Claude apagando uma dúzia de questões numa tarde) expulsava as diárias e as de versão, que são
+// as que cobrem dias diferentes. Arquivo fora do padrão de nome é cópia feita à mão: o programa não apaga.
+export const COPIAS_GUARDADAS = { diaria: 14, versao: 10, outras: 20 };
+const NOME_DE_COPIA = /^estudos \d{4}-\d{2}-\d{2} \d{6} (.+)\.db$/;
+export function grupoDaCopia(arquivo) {
+  const motivo = NOME_DE_COPIA.exec(arquivo)?.[1];
+  if (!motivo) return null;
+  if (motivo === 'diaria') return 'diaria';
+  if (motivo.startsWith('antes da versao ')) return 'versao';
+  return 'outras';
+}
 
 // Datas locais em texto (YYYY-MM-DD), para agrupar por dia no fuso do PC.
 export function dataLocal(d = new Date()) {
@@ -16,7 +28,7 @@ export function dataLocal(d = new Date()) {
 }
 
 // Cópia consistente do banco em <pasta do banco>/copias (VACUUM INTO funciona com o banco aberto).
-// Guarda as 30 mais novas.
+// Guarda as mais novas de cada motivo (COPIAS_GUARDADAS).
 export function copiarBanco(db, caminho, motivo) {
   const pasta = join(dirname(caminho), 'copias');
   mkdirSync(pasta, { recursive: true });
@@ -25,8 +37,12 @@ export function copiarBanco(db, caminho, motivo) {
   const carimbo = `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}`;
   const destino = join(pasta, `estudos ${carimbo} ${motivo}.db`.replace(/[^\w .-]/g, '_'));
   if (!existsSync(destino)) db.exec(`VACUUM INTO '${destino.replace(/'/g, "''")}'`);
-  const todas = readdirSync(pasta).filter((f) => f.endsWith('.db')).sort();
-  for (const velha of todas.slice(0, Math.max(0, todas.length - COPIAS_GUARDADAS))) rmSync(join(pasta, velha));
+  // O nome começa pela data e hora, então a ordem alfabética é a ordem do tempo.
+  const porGrupo = { diaria: [], versao: [], outras: [] };
+  for (const arquivo of readdirSync(pasta).sort()) porGrupo[grupoDaCopia(arquivo)]?.push(arquivo);
+  for (const [grupo, arquivos] of Object.entries(porGrupo)) {
+    for (const velha of arquivos.slice(0, Math.max(0, arquivos.length - COPIAS_GUARDADAS[grupo]))) rmSync(join(pasta, velha));
+  }
   return destino;
 }
 

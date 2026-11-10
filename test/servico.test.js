@@ -221,6 +221,39 @@ test('cópia de abertura: diária na primeira vez, e antes de qualquer ajuste qu
   assert.equal(readdirSync(join(caminho, '..', 'copias')).filter((f) => f.endsWith('.db')).length, 2);
 });
 
+test('cópias: o teto é por motivo, e uma leva de "antes de apagar" não expulsa as diárias nem as de versão', async () => {
+  const { mkdtempSync, mkdirSync, readdirSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { copiarBanco, COPIAS_GUARDADAS, grupoDaCopia } = await import('../src/db.js');
+  const caminho = join(mkdtempSync(join(tmpdir(), 'teto-')), 'estudos.db');
+  const db = abrirBanco(caminho);
+  const pasta = join(caminho, '..', 'copias');
+  mkdirSync(pasta);
+  const z = (n) => String(n).padStart(2, '0');
+  // Cópias antigas de mentira, cada grupo com 5 além do teto, e duas feitas à mão (fora do padrão de nome).
+  const criar = (quantas, motivo, mes) => {
+    for (let i = 0; i < quantas; i++) writeFileSync(join(pasta, `estudos 2020-${mes}-${z(1 + (i % 28))} ${z(i)}0000 ${motivo}.db`), '');
+  };
+  criar(COPIAS_GUARDADAS.diaria + 5, 'diaria', '01');
+  criar(COPIAS_GUARDADAS.versao + 5, 'antes da versao 1.0.0', '02');
+  criar(COPIAS_GUARDADAS.outras + 5, 'antes de apagar questao', '03');
+  writeFileSync(join(pasta, 'estudos antes de apagar teste de crase.db'), '');
+  writeFileSync(join(pasta, 'minha copia.db'), '');
+
+  const nova = copiarBanco(db, caminho, 'antes de apagar questao');
+  const ficaram = readdirSync(pasta);
+  const doGrupo = (g) => ficaram.filter((f) => grupoDaCopia(f) === g);
+  assert.equal(doGrupo('diaria').length, COPIAS_GUARDADAS.diaria);
+  assert.equal(doGrupo('versao').length, COPIAS_GUARDADAS.versao);
+  assert.equal(doGrupo('outras').length, COPIAS_GUARDADAS.outras);
+  assert.ok(ficaram.some((f) => nova.endsWith(f)), 'a cópia nova fica');
+  // Saem as mais velhas de cada grupo; as feitas à mão o programa não apaga.
+  assert.ok(!ficaram.includes('estudos 2020-03-01 000000 antes de apagar questao.db'));
+  assert.ok(ficaram.includes('estudos antes de apagar teste de crase.db') && ficaram.includes('minha copia.db'));
+  assert.equal(ficaram.length, COPIAS_GUARDADAS.diaria + COPIAS_GUARDADAS.versao + COPIAS_GUARDADAS.outras + 2);
+});
+
 test('sessão do Claude fica marcada', () => {
   const { db, planoId } = novoPlano();
   s.registrarSessao(db, planoId, { tipo: 'teoria', duracao_min: 20 }, 'claude');

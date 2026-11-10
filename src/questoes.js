@@ -86,21 +86,24 @@ export function extrairArray(fonte) {
 
 const primeiro = (obj, chaves) => chaves.map((k) => obj[k]).find((v) => v !== undefined && v !== null);
 
-function indiceDaCorreta(valor, total) {
-  if (typeof valor === 'number') return valor;
-  if (typeof valor === 'string') {
-    const letra = 'abcde'.indexOf(valor.trim().toLowerCase().replace(/[^a-e]/g, ''));
-    if (letra >= 0) return letra;
-    if (/^\d+$/.test(valor)) return Number(valor);
-  }
-  return valor >= 0 && valor < total ? valor : -1;
+// Gabarito: índice começando em 0 (número, ou texto só de dígitos) ou uma letra de A a F, sozinha ou em
+// formas como "B)", "(c)", "d.", "c -", "Letra C", "Alt. B". Qualquer outro texto é recusado (-1): catar letras
+// soltas dentro do texto gravava alternativa A para "2", para texto vazio e para "Alt. B", sem aviso.
+const LETRA_DO_GABARITO = /^(?:(?:letra|alternativa|alt\.?|op[cç][aã]o|gabarito)\s*:?\s*)?\(?([a-f])\)?[\s.):,-]*$/;
+export function indiceDaCorreta(valor) {
+  if (typeof valor === 'number') return Number.isInteger(valor) ? valor : -1;
+  if (typeof valor !== 'string') return -1;
+  const texto = valor.trim().toLowerCase();
+  if (/^\d+$/.test(texto)) return Number(texto);
+  const letra = LETRA_DO_GABARITO.exec(texto);
+  return letra ? 'abcdef'.indexOf(letra[1]) : -1;
 }
 
 export function normalizar(bruta, i) {
   const alternativas = primeiro(bruta, ['alts', 'opts', 'options', 'alternativas', 'opcoes']);
   const enunciado = primeiro(bruta, ['en', 'stem', 'enunciado', 'pergunta', 'q', 'question']);
   if (!Array.isArray(alternativas) || alternativas.length < 2 || !enunciado) return null;
-  const correta = indiceDaCorreta(primeiro(bruta, ['c', 'correct', 'correta', 'answer', 'gabarito']), alternativas.length);
+  const correta = indiceDaCorreta(primeiro(bruta, ['c', 'correct', 'correta', 'answer', 'gabarito']));
   if (!(correta >= 0 && correta < alternativas.length)) return null;
   return {
     numero: Number(primeiro(bruta, ['n', 'numero', 'id']) ?? i + 1),

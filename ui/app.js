@@ -400,8 +400,15 @@ async function abrirRegistro(dados) {
   form.anotacao.value = dados.anotacao ?? '';
   form.bloco_id.value = dados.bloco_id ?? '';
   form.sessao_id.value = dados.sessao_id ?? '';
+  // Garantia: o "salvar" da vez anterior não pode valer para esta abertura. No Chromium deste Electron
+  // (medido no 152) fechar com Esc já zera o returnValue; pela especificação ele ficaria como estava,
+  // e aí cancelar pelo teclado gravaria o estudo.
+  dialogo.returnValue = '';
   dialogo.showModal();
 }
+
+// Erro vindo do processo principal chega com o prefixo do Electron; a pessoa só precisa da mensagem.
+const mensagemDoErro = (erro) => String(erro?.message ?? erro).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
 
 dialogo.addEventListener('close', async () => {
   if (dialogo.returnValue !== 'salvar') return;
@@ -422,11 +429,20 @@ dialogo.addEventListener('close', async () => {
     pagina_ate: Number(f.get('pagina_ate')) || null,
   };
   const sessaoId = Number(f.get('sessao_id'));
-  if (sessaoId) {
-    await chamar('editarSessao', sessaoId, dados);
-    if (dados.topico_concluido && dados.topico_id) await chamar('alternarTopico', dados.topico_id, true);
-  } else {
-    await chamar('registrarSessao', estado.planoId, dados);
+  try {
+    if (sessaoId) {
+      await chamar('editarSessao', sessaoId, dados);
+      if (dados.topico_concluido && dados.topico_id) await chamar('alternarTopico', dados.topico_id, true);
+    } else {
+      await chamar('registrarSessao', estado.planoId, dados);
+    }
+  } catch (erro) {
+    // A janela já fechou, mas o formulário continua preenchido: reabre para nada digitado se perder
+    // (e o cronômetro segue como estava).
+    alert(`Não foi possível salvar o estudo: ${mensagemDoErro(erro)}`);
+    dialogo.returnValue = '';
+    dialogo.showModal();
+    return;
   }
   if (registroDoCronometro) pararCronometro();
   else atualizar();
@@ -658,16 +674,25 @@ function mostrarQuestao() {
 }
 
 function escolher(i) {
-  if (rodada.respondida) return;
+  if (rodada.respondida || rodada.respondendo) return; // com a resposta a caminho do banco, a escolha não muda mais
   rodada.escolhida = i;
   $('#q-alternativas').querySelectorAll('.alt').forEach((b) => b.classList.toggle('escolhida', Number(b.dataset.i) === i));
   $('#q-acao').disabled = false;
 }
 
 async function responder() {
+  // Enquanto a resposta vai ao banco, um segundo Enter ou clique não pode gravá-la de novo.
+  if (rodada.respondendo) return;
+  rodada.respondendo = true;
   const q = rodada.lista[rodada.i];
   const segundos = msCorridos(rodada.relogioQuestao) / 1000;
-  const { respostaId, acertou, correta } = await chamar('responderQuestao', q.id, rodada.escolhida, segundos);
+  let resultado;
+  try {
+    resultado = await chamar('responderQuestao', q.id, rodada.escolhida, segundos);
+  } finally {
+    rodada.respondendo = false;
+  }
+  const { respostaId, acertou, correta } = resultado;
   rodada.respondida = true;
   rodada.respostas.push({ materia_id: q.materia_id, acertou });
   $('#q-alternativas').querySelectorAll('.alt').forEach((b) => {
@@ -724,7 +749,11 @@ $('#q-acao').addEventListener('click', () => {
 $('#q-encerrar').addEventListener('click', encerrarRodada);
 
 // Teclado: A a E (ou 1 a 5) escolhe, Enter responde e avança, P pausa.
+// Só na aba Questões e fora de campo de texto: a rodada continua aberta por baixo quando a pessoa vai
+// a outra aba, e sem esta trava grifar no leitor (1 a 4) ou digitar uma nota escolhia alternativa e respondia.
 document.addEventListener('keydown', (e) => {
+  if (estado.tela !== 'questoes' || e.metaKey) return;
+  if (e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable]')) return;
   if (!$('#q-simulado').hidden && !dialogo.open && !e.ctrlKey && !e.altKey) {
     const k = 'abcdef'.indexOf(e.key.toLowerCase()) >= 0 ? 'abcdef'.indexOf(e.key.toLowerCase()) : '123456'.indexOf(e.key);
     if (k >= 0 && k < sim.lista[sim.i].alternativas.length) escolherSim(k);
@@ -737,32 +766,45 @@ document.addEventListener('keydown', (e) => {
   if (rodadaPausada()) return;
   const n = 'abcdef'.indexOf(e.key.toLowerCase()) >= 0 ? 'abcdef'.indexOf(e.key.toLowerCase()) : '123456'.indexOf(e.key);
   if (n >= 0 && n < rodada.lista[rodada.i].alternativas.length) escolher(n);
-  if (e.key === 'Enter' && !$('#q-acao').disabled) $('#q-acao').click();
+  if (e.key === 'Enter' && !$('#q-acao').disabled) {
+    // Foco em outro botão (causa do erro, Pausar, Encerrar): o Enter é dele, não do Responder.
+    const botao = e.target instanceof Element ? e.target.closest('button') : null;
+    if (botao && botao !== $('#q-acao') && !botao.classList.contains('alt')) return;
+    e.preventDefault(); // com o foco no Responder ou numa alternativa, o Enter também clicaria nele: a ação sairia duas vezes
+    $('#q-acao').click();
+  }
 });
 
 // Fecha a rodada e lança no histórico um estudo de questões por matéria, com o tempo dividido
 // pela quantidade de questões de cada uma.
 async function encerrarRodada() {
+  // Clique duplo em Encerrar lançaria os estudos da rodada duas vezes no histórico.
+  if (rodada.encerrando) return;
+  rodada.encerrando = true;
   const respostas = rodada.respostas;
   const minutos = Math.max(1, Math.round(msCorridos(rodada.relogio) / 60000));
-  if (respostas.length) {
-    const porMateria = new Map();
-    for (const r of respostas) {
-      const m = porMateria.get(r.materia_id) || { acertos: 0, erros: 0 };
-      r.acertou ? m.acertos++ : m.erros++;
-      porMateria.set(r.materia_id, m);
+  try {
+    if (respostas.length) {
+      const porMateria = new Map();
+      for (const r of respostas) {
+        const m = porMateria.get(r.materia_id) || { acertos: 0, erros: 0 };
+        r.acertou ? m.acertos++ : m.erros++;
+        porMateria.set(r.materia_id, m);
+      }
+      for (const [materia_id, m] of porMateria) {
+        await chamar('registrarSessao', estado.planoId, {
+          materia_id,
+          tipo: 'questoes',
+          duracao_min: Math.round((minutos * (m.acertos + m.erros)) / respostas.length),
+          acertos: m.acertos,
+          erros: m.erros,
+          anotacao: `Banco de questões do app: ${m.acertos + m.erros} questões`,
+        });
+      }
+      if (rodada.blocoId) await chamar('pularBloco', rodada.blocoId);
     }
-    for (const [materia_id, m] of porMateria) {
-      await chamar('registrarSessao', estado.planoId, {
-        materia_id,
-        tipo: 'questoes',
-        duracao_min: Math.round((minutos * (m.acertos + m.erros)) / respostas.length),
-        acertos: m.acertos,
-        erros: m.erros,
-        anotacao: `Banco de questões do app: ${m.acertos + m.erros} questões`,
-      });
-    }
-    if (rodada.blocoId) await chamar('pularBloco', rodada.blocoId);
+  } finally {
+    rodada.encerrando = false;
   }
   rodada.blocoId = null;
   rodada.relogio = null;
@@ -830,7 +872,7 @@ $('#s-montar').addEventListener('click', async () => {
 function iniciarSimulado(lista, { limiteMin, lote }) {
   Object.assign(sim, {
     lista, i: 0, escolhas: lista.map(() => null), segundos: lista.map(() => 0),
-    inicio: Date.now(), limiteMin, lote, abertaEm: Date.now(), entregando: false,
+    inicio: Date.now(), limiteMin, lote, abertaEm: Date.now(), entregando: false, entregaAutomatica: true,
   });
   $('#q-escolha').hidden = true;
   $('#q-fim').hidden = true;
@@ -849,7 +891,7 @@ function relogioSimulado() {
     const resta = Math.max(0, sim.limiteMin * 60 - corridos);
     $('#sim-relogio').textContent = `faltam ${fmt(resta)}`;
     $('#sim-relogio').classList.toggle('acabando', resta < 300);
-    if (resta === 0) entregarSimulado(true);
+    if (resta === 0 && sim.entregaAutomatica) entregarSimulado(true);
   } else {
     $('#sim-relogio').textContent = fmt(corridos);
   }
@@ -917,11 +959,21 @@ async function entregarSimulado(tempoAcabou) {
   sim.entregando = true;
   anotarTempoSim();
   const minutos = Math.max(1, Math.round((Date.now() - sim.inicio) / 60000));
-  const r = await chamar('corrigirSimulado', estado.planoId, {
-    respostas: sim.lista.map((q, k) => ({ questao_id: q.id, escolhida: sim.escolhas[k], segundos: sim.segundos[k] })),
-    minutos,
-    lote: sim.lote,
-  });
+  let r;
+  try {
+    r = await chamar('corrigirSimulado', estado.planoId, {
+      respostas: sim.lista.map((q, k) => ({ questao_id: q.id, escolhida: sim.escolhas[k], segundos: sim.segundos[k] })),
+      minutos,
+      lote: sim.lote,
+    });
+  } catch (erro) {
+    // As respostas só existem nesta tela. Se a correção falhar, o simulado fica aberto para entregar de novo;
+    // se foi o fim do tempo que entregou, a entrega automática para, senão o aviso voltaria a cada segundo.
+    sim.entregando = false;
+    if (tempoAcabou) sim.entregaAutomatica = false;
+    alert(`Não foi possível corrigir o simulado: ${mensagemDoErro(erro)}\n\nSuas respostas continuam aqui. Clique em Entregar para tentar de novo.`);
+    return;
+  }
   fecharSimulado();
   mostrarResultadoSimulado(r, tempoAcabou);
 }

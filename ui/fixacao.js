@@ -57,6 +57,9 @@ export function iniciarFixacao({ chamar, estado, $ }) {
     mostrarCartao();
   }
 
+  // O que define a lista na tela: plano, filtros e os baralhos que existem (com a contagem de cada um).
+  const retratoDaLista = () => JSON.stringify([estado.planoId, $('#fc-materia').value, $('#fc-baralho').value, fc.baralhos]);
+
   async function carregarCartoes(aleatorio) {
     const filtros = { aleatorio, limite: 2000 };
     if ($('#fc-materia').value) filtros.materiaId = Number($('#fc-materia').value);
@@ -64,6 +67,7 @@ export function iniciarFixacao({ chamar, estado, $ }) {
     fc.lista = await chamar('flashcards', estado.planoId, filtros);
     fc.i = 0;
     fc.virado = false;
+    fc.retrato = retratoDaLista();
     mostrarCartao();
   }
 
@@ -83,6 +87,10 @@ export function iniciarFixacao({ chamar, estado, $ }) {
     for (const b of fc.baralhos) if (b.materia_id) materias.set(b.materia_id, b.materia);
     preencherSelect($('#fc-materia'), [['', 'Todas'], ...[...materias].map(([id, nome]) => [String(id), nome])], materiaAntes);
     preencherBaralhos(baralhoAntes);
+    // A tela é redesenhada a cada 30 s e sempre que a janela ganha foco (app.js, recarregarSePuder).
+    // Sem mudança nos baralhos nem nos filtros, o cartão atual e a ordem embaralhada ficam como estão:
+    // recarregar aqui devolvia a pessoa ao primeiro cartão no meio da revisão.
+    if (fc.lista.length > 0 && fc.retrato === retratoDaLista()) return;
     await carregarCartoes(false);
   }
 

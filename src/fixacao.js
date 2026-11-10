@@ -74,7 +74,8 @@ export function listarBaralhos(db, planoId, { materiaId = null } = {}) {
   return db
     .prepare(
       `SELECT f.baralho, f.materia_id, m.nome materia, MIN(f.material_id) material_id, MIN(f.pagina_de) pagina_de,
-              MAX(f.pagina_ate) pagina_ate, COUNT(*) cartoes, MIN(substr(f.criado_em, 1, 10)) criado_em
+              MAX(f.pagina_ate) pagina_ate, COUNT(*) cartoes, MIN(substr(f.criado_em, 1, 10)) criado_em,
+              MAX(f.id) ultimo_id
        FROM flashcard f LEFT JOIN materia m ON m.id = f.materia_id
        WHERE f.plano_id = ? ${filtro}
        GROUP BY f.baralho, f.materia_id ORDER BY MAX(f.id) DESC`,

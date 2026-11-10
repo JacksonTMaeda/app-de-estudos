@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Servidor MCP do App De Estudos: deixa o Claude consultar e mexer no app ao vivo.
 // Lê, grava e apaga (decisão de projeto: total liberdade). Antes de cada operação que apaga
-// ou refaz algo, guarda uma cópia do banco em <pasta do banco>/copias (as 30 mais novas, junto com as cópias de abertura).
+// ou refaz algo, guarda uma cópia do banco em <pasta do banco>/copias (as 20 mais novas; diárias e de versão têm teto à parte).
 // Fala o protocolo MCP direto (JSON-RPC, uma mensagem por linha no stdin/stdout); stdout é só do protocolo,
 // qualquer aviso vai para o stderr.
 import { spawn } from 'node:child_process';
@@ -20,6 +20,7 @@ import { analisarQuestoes } from './analise.js';
 import * as materiais from './materiais.js';
 import * as fixacao from './fixacao.js';
 import { codificarPedido, MAX_IDS } from './pedido.js';
+import { conferirArgumentos } from './esquema.js';
 
 const VERSAO = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 const PROTOCOLOS = ['2025-06-18', '2025-03-26', '2024-11-05'];
@@ -304,7 +305,7 @@ const FERRAMENTAS = {
 // ---------- gravar e apagar ----------
 const ESTUDO = {
   materia: { type: 'string', description: 'Nome ou parte do nome da matéria' },
-  assunto: { type: 'string', description: 'Número do assunto no edital ou parte do nome (opcional)' },
+  assunto: { type: ['string', 'integer'], description: 'Número do assunto no edital ou parte do nome (opcional)' },
   tipo: { type: 'string', enum: ['teoria', 'questoes', 'revisao'] },
   minutos: { type: 'integer', minimum: 0 },
   acertos: { type: 'integer', minimum: 0 },
@@ -389,7 +390,7 @@ Object.assign(FERRAMENTAS, {
     description: 'Marca um assunto do edital como concluído (ou desmarca).',
     inputSchema: {
       type: 'object',
-      properties: { ...PLANO, materia: ESTUDO.materia, assunto: { type: 'string', description: 'Número no edital ou parte do nome' }, concluido: { type: 'boolean' } },
+      properties: { ...PLANO, materia: ESTUDO.materia, assunto: { type: ['string', 'integer'], description: 'Número no edital ou parte do nome' }, concluido: { type: 'boolean' } },
       required: ['materia', 'assunto', 'concluido'],
     },
     escreve: true,
@@ -594,7 +595,7 @@ Object.assign(FERRAMENTAS, {
       type: 'object',
       properties: {
         ...PLANO,
-        ids: { type: 'array', items: { type: 'integer' }, minItems: 1, description: 'Ids dos cartões (ferramenta flashcards)' },
+        ids: { type: 'array', items: { type: 'integer' }, description: 'Ids dos cartões (ferramenta flashcards)' },
         baralho: { type: 'string', description: 'Nome exato do baralho a apagar por inteiro' },
       },
     },
@@ -1195,10 +1196,16 @@ export function tratar(msg) {
         })),
       };
     case 'tools/call': {
-      const ferramenta = FERRAMENTAS[params.name];
+      const ferramenta = Object.hasOwn(FERRAMENTAS, params.name) ? FERRAMENTAS[params.name] : null;
       if (!ferramenta) return { isError: true, content: [{ type: 'text', text: `Ferramenta desconhecida: ${params.name}` }] };
+      const argumentos = params.arguments ?? {};
+      const problemas = conferirArgumentos(ferramenta.inputSchema, argumentos);
+      if (problemas.length) {
+        const resto = problemas.length > 5 ? ` (e mais ${problemas.length - 5})` : '';
+        return { isError: true, content: [{ type: 'text', text: `Argumentos inválidos para ${params.name}: ${problemas.slice(0, 5).join('; ')}${resto}. Nada foi feito.` }] };
+      }
       try {
-        const dados = ferramenta.rodar(params.arguments ?? {});
+        const dados = ferramenta.rodar(argumentos);
         return { content: [{ type: 'text', text: JSON.stringify(dados, null, 1) }] };
       } catch (erro) {
         return { isError: true, content: [{ type: 'text', text: erro.message }] };

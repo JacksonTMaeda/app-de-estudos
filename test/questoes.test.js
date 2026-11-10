@@ -45,6 +45,17 @@ test('gabarito em letra também vale', () => {
   assert.equal(q.normalizar({ q: 'x', options: ['a', 'b', 'c'], answer: 'C' }, 0).correta, 2);
 });
 
+test('gabarito em texto: número como texto e letra com enfeite valem; o resto é recusado, nunca vira A', () => {
+  const com = (answer, total = 5) => q.normalizar({ q: 'x', options: ['a', 'b', 'c', 'd', 'e', 'f'].slice(0, total), answer }, 0);
+  for (const [texto, indice] of [['2', 2], [' 0 ', 0], ['b', 1], ['B)', 1], ['(c)', 2], ['d.', 3], ['c -', 2], ['Letra C', 2], ['Alt. B', 1], ['Alternativa: E', 4], ['Opção B', 1]]) {
+    assert.equal(com(texto)?.correta, indice, texto);
+  }
+  assert.equal(com('F', 6).correta, 5); // sexta alternativa
+  for (const ruim of ['', '   ', 'cd', 'a ou b', 'verdadeiro', 'F', '7', 1.5, -1, true, {}]) {
+    assert.equal(com(ruim), null, JSON.stringify(ruim)); // "F" e "7" caem fora das cinco alternativas
+  }
+});
+
 test('código do quiz não acessa nada fora da caixa', () => {
   const malicioso = '<script>var Q = [{en:"x", alts:["a","b"], c: (typeof process === "undefined" ? 0 : 1)}];</script>';
   assert.equal(q.lerQuiz(malicioso)[0].correta, 0);
