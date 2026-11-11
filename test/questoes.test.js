@@ -136,3 +136,27 @@ function require_edital() {
   return ['Língua Portuguesa (25)', 'Raciocínio Lógico-Matemático (5)', 'Tecnologia, Segurança Cibernética e Crimes Digitais (15)',
     'Ciências Forenses (10)', 'Biologia (10)'].map((m) => `### ${m}\n- tópico`).join('\n');
 }
+
+test('filtra por assunto da matéria, com contagem e opção sem assunto', () => {
+  const { db, planoId, pasta } = planoComQuizzes();
+  q.importarPasta(db, planoId, pasta);
+  const tec = db.prepare("SELECT id FROM materia WHERE plano_id = ? AND nome = 'Tecnologia e Crimes Digitais'").get(planoId).id;
+  db.prepare('INSERT INTO topico (materia_id, numero, nome) VALUES (?, 900, ?)').run(tec, 'Redes');
+  q.adicionarQuestoes(db, planoId, {
+    origem: 'claude/teste', materiaId: tec,
+    questoes: [
+      { fonte: 'CEBRASPE', tema: null, enunciado: 'sem tema', alternativas: ['a', 'b'], correta: 0, comentario: '' },
+      { fonte: 'CEBRASPE', tema: 'Tema solto', enunciado: 'tema fora do plano', alternativas: ['a', 'b'], correta: 0, comentario: '' },
+    ],
+  });
+  const { assuntos, semAssunto } = q.listarAssuntos(db, planoId, tec);
+  assert.deepEqual(assuntos, [{ tema: 'Redes', total: 2, no_plano: true }, { tema: 'Tema solto', total: 1, no_plano: false }]);
+  assert.equal(semAssunto, 1);
+  assert.equal(q.listarQuestoes(db, planoId, { materiaId: tec, tema: 'redes ' }).length, 2);
+  assert.equal(q.listarQuestoes(db, planoId, { materiaId: tec, tema: q.SEM_ASSUNTO }).length, 1);
+  assert.equal(q.listarQuestoes(db, planoId, { materiaId: tec }).length, 4); // sem assunto escolhido, tudo como antes
+  assert.equal(q.listarQuestoes(db, planoId, { tema: 'Célula' }).length, 1);
+  assert.equal(q.listarQuestoes(db, planoId, { materiaId: tec, tema: 'Célula' }).length, 0);
+  const bio = db.prepare("SELECT id FROM materia WHERE plano_id = ? AND nome = 'Biologia'").get(planoId).id;
+  assert.deepEqual(q.listarAssuntos(db, planoId, bio), { assuntos: [{ tema: 'Célula', total: 1, no_plano: true }], semAssunto: 0 });
+});

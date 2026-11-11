@@ -202,11 +202,39 @@ const temLotesReservados = (db) => !!db.prepare("SELECT 1 FROM sqlite_master WHE
 const RESERVADO = `EXISTS (SELECT 1 FROM lote_reservado l WHERE l.plano_id = q.plano_id AND l.origem = q.origem
   AND (l.libera_em IS NULL OR l.libera_em > ?))`;
 
+export const SEM_ASSUNTO = '__sem_assunto__';
+
+// Assuntos de uma matéria que têm questão no plano, com a contagem. Primeiro os do edital (tabela topico, na ordem
+// do edital), depois outros temas gravados à mão. semAssunto conta as questões sem tema. O tema casa sem
+// diferença de maiúsculas nem de espaços nas pontas.
+export function listarAssuntos(db, planoId, materiaId) {
+  prepararQuestoes(db);
+  const contagem = new Map();
+  let semAssunto = 0;
+  for (const { tema, total } of db
+    .prepare('SELECT trim(tema) tema, COUNT(*) total FROM questao WHERE plano_id = ? AND materia_id = ? GROUP BY lower(trim(tema))')
+    .all(planoId, materiaId)) {
+    if (!tema) semAssunto += total;
+    else contagem.set(tema.toLowerCase(), { tema, total });
+  }
+  const assuntos = [];
+  for (const t of db.prepare('SELECT nome FROM topico WHERE materia_id = ? ORDER BY numero').all(materiaId)) {
+    const c = contagem.get(t.nome.trim().toLowerCase());
+    if (c) {
+      assuntos.push({ tema: t.nome, total: c.total, no_plano: true });
+      contagem.delete(t.nome.trim().toLowerCase());
+    }
+  }
+  const outros = [...contagem.values()].sort((a, b) => b.total - a.total || a.tema.localeCompare(b.tema, 'pt-BR'));
+  for (const c of outros) assuntos.push({ tema: c.tema, total: c.total, no_plano: false });
+  return { assuntos, semAssunto };
+}
+
 // origem: 'todas', 'banca', 'autoral' ou o nome de uma banca (ex.: 'FGV').
 // lote: só as questões desse lote (campo origem), reservado ou não. Sem lote, os reservados ficam de fora,
 // a não ser com incluirReservados (simulado). aleatoria embaralha antes do limite.
 export function listarQuestoes(db, planoId, {
-  materiaId = null, origem = 'todas', situacao = 'todas', ids = null, limite = 200,
+  materiaId = null, tema = null, origem = 'todas', situacao = 'todas', ids = null, limite = 200,
   lote = null, incluirReservados = false, aleatoria = false, hoje = dataLocal(),
 } = {}) {
   prepararQuestoes(db);
@@ -226,6 +254,11 @@ export function listarQuestoes(db, planoId, {
   if (materiaId) {
     filtros.push('q.materia_id = ?');
     args.push(materiaId);
+  }
+  if (tema === SEM_ASSUNTO) filtros.push("(q.tema IS NULL OR trim(q.tema) = '')");
+  else if (tema) {
+    filtros.push('lower(trim(q.tema)) = lower(trim(?))');
+    args.push(tema);
   }
   if (origem === 'banca') filtros.push(DE_BANCA);
   else if (origem === 'autoral') filtros.push(`NOT ${DE_BANCA}`);

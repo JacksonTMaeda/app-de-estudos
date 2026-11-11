@@ -578,6 +578,7 @@ const ehBanca = (fonte) => fonte && !/autoral/i.test(fonte);
 function filtrosDeQuestao() {
   return {
     materiaId: Number($('#q-materia').value) || null,
+    tema: $('#q-assunto-rotulo').hidden ? null : $('#q-assunto').value || null,
     origem: $('#q-origem').value,
     situacao: $('#q-situacao').value,
     lote: $('#q-lote').value || null,
@@ -607,7 +608,34 @@ async function telaQuestoes() {
     ? resumo.map((r) => `<tr><td>${esc(r.materia ?? 'Sem matéria')}</td><td>${r.total}</td><td>${r.respondidas}</td>
         <td>${r.respostas ? pct(r.acertos / r.respostas) : ''}</td></tr>`).join('')
     : '<tr><td colspan="4" class="sutil">Nenhuma questão ainda. Use "Importar quizzes do cofre" e escolha a pasta do concurso.</td></tr>';
+  await montarAssuntos();
   await contarDisponiveis();
+}
+
+// Segundo filtro: os assuntos da matéria escolhida, com a contagem. Sem matéria, o filtro some.
+async function montarAssuntos() {
+  const rotulo = $('#q-assunto-rotulo');
+  const sel = $('#q-assunto');
+  const materiaId = Number($('#q-materia').value) || null;
+  const anterior = sel.dataset.materia === String(materiaId) ? sel.value : '';
+  sel.dataset.materia = String(materiaId);
+  if (!materiaId) {
+    rotulo.hidden = true;
+    sel.innerHTML = '';
+    return;
+  }
+  const { assuntos, semAssunto } = await chamar('assuntosDeQuestoes', estado.planoId, materiaId);
+  if (assuntos.length === 0 && semAssunto === 0) {
+    rotulo.hidden = true;
+    sel.innerHTML = '';
+    return;
+  }
+  const total = assuntos.reduce((a, x) => a + x.total, 0) + semAssunto;
+  sel.innerHTML = `<option value="">Todos os assuntos (${total})</option>`
+    + assuntos.map((x) => `<option value="${esc(x.tema)}">${esc(x.tema)} (${x.total})</option>`).join('')
+    + (semAssunto ? `<option value="__sem_assunto__">Sem assunto (${semAssunto})</option>` : '');
+  if ([...sel.options].some((o) => o.value === anterior)) sel.value = anterior;
+  rotulo.hidden = false;
 }
 
 async function contarDisponiveis() {
@@ -616,7 +644,8 @@ async function contarDisponiveis() {
   $('#q-comecar').disabled = lista.length === 0;
   return lista;
 }
-['#q-materia', '#q-origem', '#q-situacao', '#q-lote'].forEach((s) => $(s).addEventListener('change', contarDisponiveis));
+$('#q-materia').addEventListener('change', async () => { await montarAssuntos(); await contarDisponiveis(); });
+['#q-assunto', '#q-origem', '#q-situacao', '#q-lote'].forEach((s) => $(s).addEventListener('change', contarDisponiveis));
 
 $('#q-importar').addEventListener('click', async () => {
   const relatorio = await chamar('importarQuizzes', estado.planoId);

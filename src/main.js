@@ -81,6 +81,7 @@ const api = {
   montarSimulado: (planoId, pedido) => simulado.montarSimulado(db, planoId, pedido),
   corrigirSimulado: (planoId, dados) => simulado.corrigirSimulado(db, planoId, dados),
   bancas: (planoId) => questoes.listarBancas(db, planoId),
+  assuntosDeQuestoes: (planoId, materiaId) => questoes.listarAssuntos(db, planoId, materiaId),
   resumoQuestoes: (planoId) => questoes.resumoQuestoes(db, planoId),
   responderQuestao: (questaoId, escolhida, segundos) => questoes.responderQuestao(db, questaoId, escolhida, segundos),
   marcarCausa: (respostaId, causa) => questoes.marcarCausa(db, respostaId, causa),

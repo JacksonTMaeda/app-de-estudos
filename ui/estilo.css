@@ -438,3 +438,4 @@ button.m-cartao:hover { border-color: var(--primaria); }
 .player audio { width: min(460px, 45vw); height: 36px; }
 .player select { padding: 4px; border-radius: 6px; border: 1px solid var(--borda); background: var(--fundo); }
 body.com-player main { padding-bottom: 72px; }
+#q-assunto-rotulo[hidden] { display: none; }
