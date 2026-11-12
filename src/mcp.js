@@ -1020,6 +1020,7 @@ Object.assign(FERRAMENTAS, {
         lote: { type: 'string', description: 'Nome do lote (veja lotes_de_questoes)' },
         materia: { type: 'string', description: 'Nome ou parte do nome da matéria' },
         assunto: { type: 'string', description: 'Assunto (campo tema da questão, nome exato do assunto do plano); "sem assunto" pega as sem tema' },
+        assuntos: { type: 'array', items: { type: 'string' }, description: 'Vários assuntos de uma vez (basta casar com um); aceita "sem assunto"' },
         situacao: { type: 'string', enum: ['todas', 'nao_respondidas', 'erradas'], description: 'Padrão: todas' },
         quantas: { type: 'integer', minimum: 1, maximum: MAX_IDS, description: 'Máximo de questões na rodada (padrão 20)' },
         embaralhar: { type: 'boolean', description: 'Padrão false: ordem do lote, ou a dos ids' },
@@ -1031,7 +1032,9 @@ Object.assign(FERRAMENTAS, {
       if (args.ids?.length) filtros.ids = args.ids;
       if (args.lote) filtros.lote = questoes.acharLote(banco(), plano.id, args.lote);
       if (args.materia) filtros.materiaId = materiaPorNome(plano.id, args.materia).id;
-      if (args.assunto) filtros.tema = /^sem assunto$/i.test(args.assunto.trim()) ? questoes.SEM_ASSUNTO : args.assunto;
+      const temas = [args.assunto, ...(args.assuntos ?? [])].filter(Boolean)
+        .map((t) => (/^sem assunto$/i.test(t.trim()) ? questoes.SEM_ASSUNTO : t));
+      if (temas.length) filtros.tema = temas;
       let lista = questoes.listarQuestoes(banco(), plano.id, filtros);
       if (args.ids?.length) {
         const ordem = new Map(args.ids.map((id, i) => [id, i]));

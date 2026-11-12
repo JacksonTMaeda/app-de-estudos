@@ -154,6 +154,9 @@ test('filtra por assunto da matéria, com contagem e opção sem assunto', () =>
   assert.equal(semAssunto, 1);
   assert.equal(q.listarQuestoes(db, planoId, { materiaId: tec, tema: 'redes ' }).length, 2);
   assert.equal(q.listarQuestoes(db, planoId, { materiaId: tec, tema: q.SEM_ASSUNTO }).length, 1);
+  assert.equal(q.listarQuestoes(db, planoId, { materiaId: tec, tema: ['Redes', 'Tema solto'] }).length, 3);
+  assert.equal(q.listarQuestoes(db, planoId, { materiaId: tec, tema: ['Tema solto', q.SEM_ASSUNTO] }).length, 2);
+  assert.equal(q.listarQuestoes(db, planoId, { materiaId: tec, tema: [] }).length, 4);
   assert.equal(q.listarQuestoes(db, planoId, { materiaId: tec }).length, 4); // sem assunto escolhido, tudo como antes
   assert.equal(q.listarQuestoes(db, planoId, { tema: 'Célula' }).length, 1);
   assert.equal(q.listarQuestoes(db, planoId, { materiaId: tec, tema: 'Célula' }).length, 0);

@@ -439,3 +439,10 @@ button.m-cartao:hover { border-color: var(--primaria); }
 .player select { padding: 4px; border-radius: 6px; border: 1px solid var(--borda); background: var(--fundo); }
 body.com-player main { padding-bottom: 72px; }
 #q-assunto-rotulo[hidden] { display: none; }
+
+#q-assunto-rotulo[hidden] { display: none; }
+.multi { position: relative; display: flex; flex-direction: column; gap: 4px; }
+.multi .rotulo { font-size: 12px; font-weight: 600; color: var(--sutil); }
+.multi summary { padding: 7px 8px; border-radius: 8px; border: 1px solid var(--borda); background: var(--fundo); min-width: 220px; max-width: 320px; cursor: pointer; color: var(--texto); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.multi-caixa { position: absolute; z-index: 20; top: 100%; left: 0; width: 420px; max-width: 90vw; max-height: 320px; overflow-y: auto; margin-top: 4px; padding: 8px; border-radius: 8px; border: 1px solid var(--borda); background: var(--fundo); box-shadow: 0 6px 18px rgba(0,0,0,.18); }
+.multi-caixa label { display: flex; flex-direction: row; align-items: flex-start; gap: 6px; padding: 3px 2px; font-size: 13px; font-weight: 400; color: var(--texto); cursor: pointer; }

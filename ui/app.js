@@ -578,7 +578,7 @@ const ehBanca = (fonte) => fonte && !/autoral/i.test(fonte);
 function filtrosDeQuestao() {
   return {
     materiaId: Number($('#q-materia').value) || null,
-    tema: $('#q-assunto-rotulo').hidden ? null : $('#q-assunto').value || null,
+    tema: $('#q-assunto-rotulo').hidden ? null : assuntosMarcados(),
     origem: $('#q-origem').value,
     situacao: $('#q-situacao').value,
     lote: $('#q-lote').value || null,
@@ -612,30 +612,34 @@ async function telaQuestoes() {
   await contarDisponiveis();
 }
 
-// Segundo filtro: os assuntos da matéria escolhida, com a contagem. Sem matéria, o filtro some.
+// Segundo filtro: os assuntos da matéria escolhida, com a contagem, e dá para marcar vários.
+// Sem matéria, o filtro some. Sem nenhum marcado vale todos.
+const assuntosMarcados = () => [...document.querySelectorAll('#q-assunto-lista input:checked')].map((i) => i.value);
+
+function resumirAssuntos() {
+  const marcados = [...document.querySelectorAll('#q-assunto-lista input:checked')];
+  const total = $('#q-assunto-lista').dataset.total;
+  $('#q-assunto-resumo').textContent = marcados.length === 0
+    ? `Todos os assuntos (${total})`
+    : marcados.length === 1 ? marcados[0].parentElement.textContent.trim() : `${marcados.length} assuntos selecionados`;
+}
+
 async function montarAssuntos() {
   const rotulo = $('#q-assunto-rotulo');
-  const sel = $('#q-assunto');
+  const lista = $('#q-assunto-lista');
   const materiaId = Number($('#q-materia').value) || null;
-  const anterior = sel.dataset.materia === String(materiaId) ? sel.value : '';
-  sel.dataset.materia = String(materiaId);
-  if (!materiaId) {
-    rotulo.hidden = true;
-    sel.innerHTML = '';
-    return;
-  }
+  const antes = lista.dataset.materia === String(materiaId) ? new Set(assuntosMarcados()) : new Set();
+  lista.dataset.materia = String(materiaId);
+  const esconder = () => { rotulo.hidden = true; lista.innerHTML = ''; $('#q-assunto').open = false; };
+  if (!materiaId) return esconder();
   const { assuntos, semAssunto } = await chamar('assuntosDeQuestoes', estado.planoId, materiaId);
-  if (assuntos.length === 0 && semAssunto === 0) {
-    rotulo.hidden = true;
-    sel.innerHTML = '';
-    return;
-  }
-  const total = assuntos.reduce((a, x) => a + x.total, 0) + semAssunto;
-  sel.innerHTML = `<option value="">Todos os assuntos (${total})</option>`
-    + assuntos.map((x) => `<option value="${esc(x.tema)}">${esc(x.tema)} (${x.total})</option>`).join('')
-    + (semAssunto ? `<option value="__sem_assunto__">Sem assunto (${semAssunto})</option>` : '');
-  if ([...sel.options].some((o) => o.value === anterior)) sel.value = anterior;
+  if (assuntos.length === 0 && semAssunto === 0) return esconder();
+  const caixa = (valor, texto, n) => `<label><input type="checkbox" value="${esc(valor)}"${antes.has(valor) ? ' checked' : ''}> <span>${esc(texto)} (${n})</span></label>`;
+  lista.dataset.total = assuntos.reduce((a, x) => a + x.total, 0) + semAssunto;
+  lista.innerHTML = assuntos.map((x) => caixa(x.tema, x.tema, x.total)).join('')
+    + (semAssunto ? caixa('__sem_assunto__', 'Sem assunto', semAssunto) : '');
   rotulo.hidden = false;
+  resumirAssuntos();
 }
 
 async function contarDisponiveis() {
@@ -645,7 +649,14 @@ async function contarDisponiveis() {
   return lista;
 }
 $('#q-materia').addEventListener('change', async () => { await montarAssuntos(); await contarDisponiveis(); });
-['#q-assunto', '#q-origem', '#q-situacao', '#q-lote'].forEach((s) => $(s).addEventListener('change', contarDisponiveis));
+$('#q-assunto-lista').addEventListener('change', async () => { resumirAssuntos(); await contarDisponiveis(); });
+$('#q-assunto-limpar').addEventListener('click', async () => {
+  document.querySelectorAll('#q-assunto-lista input').forEach((i) => { i.checked = false; });
+  resumirAssuntos();
+  await contarDisponiveis();
+});
+document.addEventListener('click', (e) => { if (!e.target.closest('#q-assunto')) $('#q-assunto').open = false; });
+['#q-origem', '#q-situacao', '#q-lote'].forEach((s) => $(s).addEventListener('change', contarDisponiveis));
 
 $('#q-importar').addEventListener('click', async () => {
   const relatorio = await chamar('importarQuizzes', estado.planoId);

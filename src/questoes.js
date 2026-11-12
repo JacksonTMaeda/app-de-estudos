@@ -255,10 +255,18 @@ export function listarQuestoes(db, planoId, {
     filtros.push('q.materia_id = ?');
     args.push(materiaId);
   }
-  if (tema === SEM_ASSUNTO) filtros.push("(q.tema IS NULL OR trim(q.tema) = '')");
-  else if (tema) {
-    filtros.push('lower(trim(q.tema)) = lower(trim(?))');
-    args.push(tema);
+  // tema: um assunto ou uma lista deles (basta casar com um); SEM_ASSUNTO na lista pega as questões sem tema.
+  const temas = (Array.isArray(tema) ? tema : [tema]).filter(Boolean);
+  if (temas.length) {
+    const partes = [];
+    for (const t of temas) {
+      if (t === SEM_ASSUNTO) partes.push("(q.tema IS NULL OR trim(q.tema) = '')");
+      else {
+        partes.push('lower(trim(q.tema)) = lower(trim(?))');
+        args.push(t);
+      }
+    }
+    filtros.push(`(${partes.join(' OR ')})`);
   }
   if (origem === 'banca') filtros.push(DE_BANCA);
   else if (origem === 'autoral') filtros.push(`NOT ${DE_BANCA}`);

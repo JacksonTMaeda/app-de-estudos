@@ -113,7 +113,16 @@
           <div class="cabeca"><h2>Resolver questões</h2><button id="q-importar" class="secundario">Importar quizzes do cofre</button></div>
           <div class="filtros">
             <label>Matéria <select id="q-materia"></select></label>
-            <label id="q-assunto-rotulo" hidden>Assunto <select id="q-assunto"></select></label>
+            <div id="q-assunto-rotulo" class="multi" hidden>
+              <span class="rotulo">Assuntos</span>
+              <details id="q-assunto">
+                <summary id="q-assunto-resumo">Todos os assuntos</summary>
+                <div class="multi-caixa">
+                  <button type="button" id="q-assunto-limpar" class="texto">Limpar seleção</button>
+                  <div id="q-assunto-lista"></div>
+                </div>
+              </details>
+            </div>
             <label>Origem <select id="q-origem"></select></label>
             <label>Lote <select id="q-lote"></select></label>
             <label>Situação
